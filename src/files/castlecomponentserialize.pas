@@ -123,9 +123,11 @@ type
     using @link(ComponentLoad). }
   TCastleComponentFactory = class(TCastleComponent)
   strict private
-    FUrl, FTranslationGroupName: String;
-    JsonObject: TJsonObject;
+    FUrl: String;
     procedure SetUrl(const Value: String);
+  strict protected
+    FTranslationGroupName: String;
+    JsonObject: TJsonObject;
   private
     function InternalComponentLoad(
       const InstanceOwner: TComponent;
@@ -393,6 +395,122 @@ procedure InternalAssignUsingSerialization(const Destination, Source: TComponent
   on any TComponent. }
 function ComponentClone(const C: TComponent; const NewComponentOwner: TComponent): TComponent;
 
+type 
+  { TCastleJsonReader moved to interface section, bc generic ComponentFactory<T> cannot work with "externally defined" types }
+  TCastleJsonReader = class
+  private
+    type
+      TMyJsonDeStreamer = class(TJsonDeStreamer)
+      private
+        Reader: TCastleJsonReader;
+      end;
+    var
+      ComponentNames: TStringList;
+    { Events called by FJsonDeStreamer }
+    procedure GetObject(AObject: TObject; Info: PPropInfo;
+      AData: TJsonObject; DataName: TJsonStringType; var AValue: TObject);
+  strict private
+    type
+      TResolveObjectProperty = class
+        Instance: TObject;
+        InstanceProperty: PPropInfo;
+        PropertyValue: String;
+      end;
+      TResolveObjectPropertyList = {$ifdef FPC}specialize{$endif} TObjectList<TResolveObjectProperty>;
+
+      { Handle reading custom things during TCastleComponent.CustomSerialization. }
+      TSerializationProcessReader = class(TSerializationProcess)
+      public
+        Reader: TCastleJsonReader;
+        CurrentlyReading: TJsonObject;
+        procedure ReadWriteInteger(const Key: String; var Value: Integer; const IsStored: Boolean);
+          overload; override;
+        procedure ReadWriteBoolean(const Key: String; var Value: Boolean; const IsStored: Boolean);
+          overload; override;
+        procedure ReadWriteString(const Key: String; var Value: String; const IsStored: Boolean);
+          overload; override;
+        procedure ReadWriteSingle(const Key: String; var Value: Single; const IsStored: Boolean);
+          overload; override;
+        procedure ReadWriteSubComponent(const Key: String; const Value: TComponent;
+          const IsStored: Boolean); override;
+        procedure ReadWriteList(const Key: String;
+          const ListEnumerate: TSerializationProcess.TListEnumerateEvent; const ListAdd: TSerializationProcess.TListAddEvent;
+          const ListClear: TSerializationProcess.TListClearEvent); override;
+        function InternalHasNonEmptySet(const Key: String): Boolean; override;
+      end;
+      TSerializationProcessReaderList = {$ifdef FPC}specialize{$endif} TObjectList<TSerializationProcessReader>;
+
+    var
+      FDeStreamer: TMyJsonDeStreamer;
+      ResolveObjectProperties: TResolveObjectPropertyList;
+      SerializationProcessPool: TSerializationProcessReaderList;
+      SerializationProcessPoolUsed: Integer;
+
+    { Find component name in ComponentNames.
+
+      Note: Do not use Owner.FindComponent(FindName) to resolve names
+      during deserialization.
+      Reason: Owner may already have some existing
+      components before new ones have been deserialized into it
+      (e.g. if duplicating viewport+camera into an existing
+      design) with conflicting names. We do not want to link to these
+      existing components.
+
+      See TTestCastleComponentSerialize.TestPastePreserveReferences
+      for testcase why this is important. Thanks to ComponentNames
+      e.g. copy-paste (in editor) of viewport + camera into
+      the same design works correctly.
+
+      Note that having ComponentNames with fallback on Owner.FindComponent
+      would also be bad: since the name reference may be found in design
+      before the object is defined, e.g. viewport with
+      propery "Camera": "Camera1" may be specified before Camera1 is defined.
+      We should then wait for Camera1 (not reuse unrelated Camera1 from existing
+      Owner).
+      So instead, FindComponentName looks *only* in ComponentNames. }
+    function FindComponentName(const FindName: String): TComponent;
+
+    { Events called by DeStreamer }
+    procedure BeforeReadObject(Sender: TObject; AObject: TObject; Json: TJsonObject);
+    procedure AfterReadObject(Sender: TObject; AObject: TObject; Json: TJsonObject);
+    procedure RestoreProperty(Sender: TObject; AObject: TObject; Info: PPropInfo; AValue: TJsonData; var Handled: Boolean);
+  private
+    LoadInfo: TInternalComponentLoadInfo;
+    FOwner: TComponent;
+    (*Resolve hanging references, when JSON referred to some component name
+      before this component was actually defined.
+      Like when Viewport references a camera in Viewport.Camera,
+      but the camera is only defined later while reading Viewport.Items,
+      like
+
+        "Camera": "Camera1",
+        "Items" {
+          ...
+          {
+            Name: "Camera1",
+          }
+        }
+    *)
+    procedure FinishResolvingComponentProperties;
+
+    { Like FinishResolvingComponentProperties, but only resolves references to C,
+      so it is much faster, and doesn't warn about other references remaining
+      unsolved. }
+    procedure ResolveComponentReferences(const C: TComponent);
+  public
+    constructor Create;
+    destructor Destroy; override;
+
+    function DeStreamer: TJsonDeStreamer;
+    { Will own all deserialized components. }
+    property Owner: TComponent read FOwner;
+  end;
+
+  generic TCastleComponentFactoryNew<T: TComponent> = class(TCastleComponentFactory)
+  public 
+    function ComponentLoadNew(const InstanceOwner: TComponent): T; 
+  end;
+
 implementation
 
 uses JsonParser, RtlConsts, StrUtils,
@@ -489,7 +607,7 @@ begin
 end;
 
 { loading from JSON ---------------------------------------------------------- }
-
+{ TCastleJsonReader moved to interface section, bc generic ComponentFactory<T> cannot work with "externally defined" types 
 type
   TCastleJsonReader = class
   private
@@ -599,6 +717,7 @@ type
     { Will own all deserialized components. }
     property Owner: TComponent read FOwner;
   end;
+}
 
 { Read and create suitable component class from JSON. }
 function CreateComponentFromJson(const JsonObject: TJsonObject;
@@ -1672,6 +1791,53 @@ begin
   Result := FindComponent(AName);
   if Result = nil then
     raise EComponentNotFound.CreateFmt('Cannot find component named "%s"', [AName]);
+end;
+
+
+
+function TCastleComponentFactoryNew.ComponentLoadNew(
+  const InstanceOwner: TComponent): T;
+
+  { Set Instance fields matching component names in ComponentNames. }
+  procedure MakeAssociateReferences(const Instance: T; const ComponentNames: TStringList);
+  var
+    I: Integer;
+    FieldAddr: ^TComponent;
+  begin
+    for I := 0 to ComponentNames.Count - 1 do
+    begin
+      FieldAddr := Instance.FieldAddress(ComponentNames[I]);
+      if FieldAddr <> nil then
+      begin
+        //Assert(FieldAddr^ = nil); // may not be true, user can reuse AssociateReferences
+        Assert(ComponentNames.Objects[I] is TComponent); // also checks ComponentNames.Objects[I] <> nil
+        FieldAddr^ := ComponentNames.Objects[I] as TComponent;
+      end;
+    end;
+  end;
+
+var
+  Reader: TCastleJsonReader;
+begin
+  Reader := TCastleJsonReader.Create;
+  try
+    Reader.FOwner := InstanceOwner;
+
+    { create Result with appropriate class }
+    Result := T.Create(InstanceOwner);
+
+    { read Result contents from JSON }
+    Reader.DeStreamer.JsonToObject(JsonObject, Result);
+
+    Reader.FinishResolvingComponentProperties;
+
+    MakeAssociateReferences(Result, Reader.ComponentNames);
+
+    if Assigned(OnInternalTranslateDesign) and (FTranslationGroupName <> '') then
+      OnInternalTranslateDesign(Result, FTranslationGroupName);
+  finally
+    FreeAndNil(Reader);
+  end;
 end;
 
 initialization
