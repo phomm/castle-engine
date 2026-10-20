@@ -32,7 +32,7 @@ uses SysUtils,
   ToolPackageFormat, ToolProject, ToolCompile, ToolIOS, ToolAndroid, ToolManifest,
   ToolNintendoSwitch, ToolCommonUtils, ToolUtils,
   { For ForcePipesPassthrough, necessary for Windows. } ToolProcessRun,
-  ToolCache, ToolCompilerInfo, ToolMacOS;
+  ToolCache, ToolCompilerInfo, ToolMacOS, ToolDependencyPackages;
 
 var
   Target: TTarget;
@@ -155,6 +155,18 @@ begin
             'devices' +NL+
             '    Available devices (independent of any project).' + NL +
             '    For now, only lists Android devices.' + NL +
+            NL+
+            'get-installed-packages' +NL+
+            '    List installed package IDs from <dependency_packages> in the manifest.' +NL+
+            NL+
+            'install-package PACKAGE-ID' +NL+
+            '    Add a package ID to <dependency_packages> in the manifest.' +NL+
+            NL+
+            'update-package PACKAGE-ID' +NL+
+            '    Validate installed ID; package metadata cannot be updated yet.' +NL+
+            NL+
+            'remove-package PACKAGE-ID' +NL+
+            '    Remove a package ID from <dependency_packages> in the manifest.' +NL+
             NL+
             'run' +NL+
             '    Run the application. ' +NL+
@@ -395,6 +407,22 @@ var
   RestOfParameters: TCastleStringList;
   SimpleCompileOptions: TCompilerOptions; // used only when command is "simple-compile"
 
+  function DependencyPackagesManifestFileName: String;
+  var
+    Dir, ParentDir: String;
+  begin
+    Dir := GetCurrentDir;
+    while not RegularFileExists(InclPathDelim(Dir) + ManifestName) do
+    begin
+      ParentDir := ExtractFileDir(ExclPathDelim(Dir));
+      if (ParentDir = '') or (ParentDir = Dir) then
+        raise EInvalidParams.CreateFmt('Cannot find project manifest "%s" in this directory or its parents',
+          [ManifestName]);
+      Dir := ParentDir;
+    end;
+    Result := InclPathDelim(Dir) + ManifestName;
+  end;
+
   function CreateRunParameters: TCastleStringList;
   begin
     Result := TCastleStringList.Create;
@@ -482,6 +510,26 @@ begin
   begin
     Parameters.CheckHigh(1);
     WritelnAndroidDevices;
+  end else
+  if Command = 'get-installed-packages' then
+  begin
+    Parameters.CheckHigh(1);
+    GetInstalledPackages(DependencyPackagesManifestFileName);
+  end else
+  if Command = 'install-package' then
+  begin
+    Parameters.CheckHigh(2);
+    InstallPackage(DependencyPackagesManifestFileName, Parameters[2]);
+  end else
+  if Command = 'update-package' then
+  begin
+    Parameters.CheckHigh(2);
+    UpdatePackage(DependencyPackagesManifestFileName, Parameters[2]);
+  end else
+  if Command = 'remove-package' then
+  begin
+    Parameters.CheckHigh(2);
+    RemovePackage(DependencyPackagesManifestFileName, Parameters[2]);
   end else
   if Command = 'create' then
   begin

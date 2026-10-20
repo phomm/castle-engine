@@ -12,6 +12,32 @@ See the https://castle-engine.io/build_tool for documentation.
 
 - Or just use it directly from command-line, if you like to use CLI :)
 
+## Dependency packages
+
+The `get-installed-packages`, `install-package`, `update-package`, and
+`remove-package` commands read and modify the `<dependency_packages>` section
+of the project's main `CastleEngineManifest.xml`:
+
+```xml
+<dependency_packages>
+  <package>castle-bars</package>
+</dependency_packages>
+```
+
+Run the commands from the project directory, or use `--project` to select the
+project directory or manifest file. For example, in CI:
+
+```shell
+castle-engine --project=path/to/project get-installed-packages
+castle-engine --project=path/to/project install-package castle-bars
+castle-engine --project=path/to/project update-package castle-bars
+castle-engine --project=path/to/project remove-package castle-bars
+```
+
+`get-installed-packages` prints package IDs as a comma-separated list.
+Install and update resolve the package's repository URL from the packages
+library. Actual repository installation and updating are not implemented yet.
+
 ## Building
 
 To compile the build tool, all you need is an FPC installed.

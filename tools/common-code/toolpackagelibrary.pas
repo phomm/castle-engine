@@ -51,6 +51,9 @@ type
   TPackageInfoArray = array of TPackageInfo;
 
 const
+  { Default JSON source for the packages library. }
+  DefaultPackagesLibraryUrl = 'https://raw.githubusercontent.com/phomm/cge-packages/refs/heads/main/unified.json';
+
   { Fallback source for the packages library, used when the JSON source fails. }
   LibraryFallbackUrl = 'https://raw.githubusercontent.com/castle-engine/cge-www/refs/heads/master/htdocs/additional_components.php';
 

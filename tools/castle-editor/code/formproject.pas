@@ -34,7 +34,7 @@ uses
   CastlePropEdits, CastleDialogs, X3DNodes, CastleFindFiles,
   DataModuleIcons, CastleClassUtils,
   EditorUtils, FrameDesign, FrameViewFile, FormNewUnit, ToolManifest,
-  ToolPackageFormat, ToolEditorUtils, FormImportPackage;
+  ToolPackageFormat, ToolDependencyPackages, ToolEditorUtils, FormImportPackage;
 
 const
   DockLayoutFileName = 'layout.dock-layout';
@@ -3610,7 +3610,17 @@ begin
   SoundEngineSetVolume;
   RefreshFiles(rfFilesInCurrentDir); // show new files created by "package"
   if ImportPackageForm <> nil then
-    ImportPackageForm.UpdateInstalledPackageStatuses;
+  begin
+    try
+      ReadInstalledPackages(CombinePaths(ProjectPath, ManifestName),
+        InstalledPackageIds);
+      ImportPackageForm.UpdateInstalledPackageStatuses;
+    except
+      on E: Exception do
+        ErrorBox('Cannot read installed package IDs from the project manifest: ' +
+          E.Message);
+    end;
+  end;
 end;
 
 procedure TProjectForm.GetInstalledPackages(Sender: TObject);
