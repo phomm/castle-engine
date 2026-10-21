@@ -34,7 +34,7 @@ uses
   CastlePropEdits, CastleDialogs, X3DNodes, CastleFindFiles,
   DataModuleIcons, CastleClassUtils,
   EditorUtils, FrameDesign, FrameViewFile, FormNewUnit, ToolManifest,
-  ToolPackageFormat, ToolDependencyPackages, ToolEditorUtils, FormImportPackage;
+  ToolPackageFormat, ToolEditorUtils, FormImportPackage, ToolDependencyPackages;
 
 const
   DockLayoutFileName = 'layout.dock-layout';
@@ -3613,7 +3613,7 @@ begin
   begin
     try
       ReadInstalledPackages(CombinePaths(ProjectPath, ManifestName),
-        InstalledPackageIds);
+        InstalledPackageIds, true);
       ImportPackageForm.UpdateInstalledPackageStatuses;
     except
       on E: Exception do
@@ -3641,8 +3641,6 @@ begin
   end;
 
   BuildToolCallWithParameters([Command], [PackageId]);
-  if RunningProcess <> nil then
-    InstalledPackagesRequestPending := true;
 end;
 
 procedure TProjectForm.MenuItemAddComponentClick(Sender: TObject);

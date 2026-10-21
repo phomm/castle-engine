@@ -46,40 +46,20 @@ var
   procedure RunBuildTool(const Parameters: array of String;
     const ExpectedExitStatus: Integer; out Output: String);
   var
-    Process: TCastleProcess;
     Environment: TStringList;
-    BytesRead: Integer;
-    Buffer: array [0..1023] of Byte;
+    ExitStatus: Integer;
   begin
-    Process := TCastleProcess.Create(nil);
+    Environment := EnvironmentStrings;
     try
-      Process.Executable := BuildToolExecutable;
-      Process.CurrentDirectory := ProjectDirectory;
-      Process.Options := [poUsePipes, poStderrToOutput];
-      Process.Parameters.AddStrings(Parameters);
+      Environment.Values['CASTLE_PACKAGES_LIBRARY_URL'] :=
+        FilenameToUriSafe(PackageLibraryFileName);
+      ExecuteCommandCapture(ProjectDirectory, BuildToolExecutable, Parameters,
+        Output, ExitStatus, nil, nil, [], Environment);
+    finally FreeAndNil(Environment) end;
 
-      Environment := EnvironmentStrings;
-      try
-        Environment.Values['CASTLE_PACKAGES_LIBRARY_URL'] :=
-          FilenameToUriSafe(PackageLibraryFileName);
-        Process.Environment := Environment;
-      finally FreeAndNil(Environment) end;
-
-      Process.Execute;
-      Process.WaitOnExit;
-      Output := '';
-      repeat
-        BytesRead := Process.Output.Read(Buffer, SizeOf(Buffer));
-        if BytesRead > 0 then
-          SetLength(Output, Length(Output) + BytesRead);
-        if BytesRead > 0 then
-          Move(Buffer, Output[Length(Output) - BytesRead + 1], BytesRead);
-      until BytesRead = 0;
-
-      if Process.ExitStatus <> ExpectedExitStatus then
-        Fail(Format('Command "%s" exited with status %d instead of %d. Output: %s',
-          [Parameters[0], Process.ExitStatus, ExpectedExitStatus, Output]));
-    finally FreeAndNil(Process) end;
+    if ExitStatus <> ExpectedExitStatus then
+      Fail(Format('Command "%s" exited with status %d instead of %d. Output: %s',
+        [Parameters[0], ExitStatus, ExpectedExitStatus, Output]));
   end;
 
   procedure AssertPackages(const ExpectedFirst, ExpectedSecond: String);
@@ -135,10 +115,14 @@ begin
       ']}');
 
     RunBuildTool(['get-installed-packages'], 0, Output);
-    AssertEquals('', Trim(Output));
+    AssertTrue(Pos('Packages: ', Output) <> 0);
     AssertPackages('', '');
 
     RunBuildTool(['install-package', FirstPackageId], 0, Output);
+    AssertTrue(Pos('[DependencyPackages] Appended package node; writing manifest ',
+      Output) <> 0);
+    AssertTrue(Pos('[DependencyPackages] Manifest write completed: ',
+      Output) <> 0);
     AssertPackages(FirstPackageId, '');
     RunBuildTool(['install-package', FirstPackageId], 0, Output);
     AssertPackages(FirstPackageId, '');
@@ -146,7 +130,8 @@ begin
     AssertPackages(FirstPackageId, SecondPackageId);
 
     RunBuildTool(['get-installed-packages'], 0, Output);
-    AssertEquals(FirstPackageId + ',' + SecondPackageId, Trim(Output));
+    AssertTrue(Pos('Packages: ' + FirstPackageId + ',' + SecondPackageId,
+      Output) <> 0);
 
     ManifestBeforeUpdate := FileToString(FilenameToUriSafe(ManifestFileName));
     RunBuildTool(['update-package', FirstPackageId], 0, Output);

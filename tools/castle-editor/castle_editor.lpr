@@ -46,7 +46,7 @@ uses
   EditorCodeTools, CastleShellCtrls, FormSystemInformation,
   CastleComponentEditorDesigner, DesignCameraPreview, DesignObjectInspector,
   DesignUndoSystem, DesignSteam,
-  FormRestartCustomEditor, FormImportSketchfab, FormProgress;
+  FormRestartCustomEditor, FormImportSketchfab, FormProgress, opensslsockets;
 
 { Forces using a dedicated (faster) GPU on laptops with multiple GPUs.
   See https://castle-engine.io/dedicated_gpu }

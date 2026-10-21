@@ -32,7 +32,8 @@ uses SysUtils,
   ToolPackageFormat, ToolProject, ToolCompile, ToolIOS, ToolAndroid, ToolManifest,
   ToolNintendoSwitch, ToolCommonUtils, ToolUtils,
   { For ForcePipesPassthrough, necessary for Windows. } ToolProcessRun,
-  ToolCache, ToolCompilerInfo, ToolMacOS, ToolDependencyPackages;
+  ToolCache, ToolCompilerInfo, ToolMacOS, ToolDependencyPackages, 
+  opensslsockets;
 
 var
   Target: TTarget;
