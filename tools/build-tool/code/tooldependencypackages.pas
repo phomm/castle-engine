@@ -51,6 +51,7 @@ uses SysUtils,
 const
   DependencyPackagesElementName = 'dependency_packages';
   DependencyPackageElementName = 'package';
+  PackagesLibraryUrlEnvironmentVariable = 'CASTLE_PACKAGES_LIBRARY_URL';
 
 procedure LoadPackages(const ManifestFileName: String;
   out Document: TXMLDocument; out PackagesElement: TDOMElement;
@@ -116,9 +117,13 @@ end;
 function PackageRepoUrl(const PackageId: String): String;
 var
   Packages: TPackageInfoArray;
+  PackagesLibraryUrl: String;
   I: Integer;
 begin
-  Packages := LoadPackageLibrary(DefaultPackagesLibraryUrl);
+  PackagesLibraryUrl := GetEnvironmentVariable(PackagesLibraryUrlEnvironmentVariable);
+  if PackagesLibraryUrl = '' then
+    PackagesLibraryUrl := DefaultPackagesLibraryUrl;
+  Packages := LoadPackageLibrary(PackagesLibraryUrl);
   for I := 0 to High(Packages) do
     if Packages[I].Id = PackageId then
     begin

@@ -36,7 +36,8 @@ castle-engine --project=path/to/project remove-package castle-bars
 
 `get-installed-packages` prints package IDs as a comma-separated list.
 Install and update resolve the package's repository URL from the packages
-library. Actual repository installation and updating are not implemented yet.
+library. Set `CASTLE_PACKAGES_LIBRARY_URL` to use a different JSON library
+source. Actual repository installation and updating are not implemented yet.
 
 ## Building
 

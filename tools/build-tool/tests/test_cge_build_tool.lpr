@@ -20,7 +20,8 @@ uses
   CastleScript, CastleLog,
   TestToolProject,
   TestToolManifest,
-  TestToolUtils;
+  TestToolUtils,
+  TestToolDependencyPackages;
 
 var
   ConsoleTester: TCastleConsoleTester;
