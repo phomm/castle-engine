@@ -35,7 +35,7 @@ procedure GetInstalledPackages(const ManifestFileName: String);
 procedure InstallPackage(const ManifestFileName, PackageId: String);
 
 { Check that a dependency package ID is installed.
-  Package IDs do not currently have additional metadata to update. }
+  Package metadata, including its supported features, is read from the package library. }
 procedure UpdatePackage(const ManifestFileName, PackageId: String);
 
 { Remove a dependency package ID from the project manifest. }
@@ -154,7 +154,7 @@ begin
     raise Exception.Create('Package ID cannot be empty');
 end;
 
-function PackageRepoUrl(const PackageId: String): String;
+function PackageInfoById(const PackageId: String): TPackageInfo;
 var
   Packages: TPackageInfoArray;
   PackagesLibraryUrl: String;
@@ -167,8 +167,8 @@ begin
   for I := 0 to High(Packages) do
     if Packages[I].Id = PackageId then
     begin
-      Result := Packages[I].RepoUrl;
-      if Result = '' then
+      Result := Packages[I];
+      if Result.RepoUrl = '' then
         raise Exception.CreateFmt('Package "%s" has no repository URL in the packages library',
           [PackageId]);
       Exit;
@@ -176,6 +176,14 @@ begin
 
   raise Exception.CreateFmt('Package "%s" was not found in the packages library',
     [PackageId]);
+end;
+
+procedure WritePackageFeatures(const PackageInfo: TPackageInfo);
+var
+  I: Integer;
+begin
+  for I := 0 to High(PackageInfo.Features) do
+    DependencyPackagesWrite('Package feature is ' + PackageInfo.Features[I]);
 end;
 
 procedure ReadInstalledPackages(const ManifestFileName: String;
@@ -209,16 +217,18 @@ var
   Document: TXMLDocument;
   PackagesElement, PackageElement: TDOMElement;
   PackageIds: TStringList;
-  CheckedId, RepoUrl: String;
+  CheckedId: String;
+  PackageInfo: TPackageInfo;
 begin
   DependencyPackagesWrite(Format('Install command: manifest="%s", package="%s"',
     [ManifestFileName, PackageId]));
   CheckedId := CheckedPackageId(PackageId);
   DependencyPackagesWrite(Format('Checked package ID is "%s"', [CheckedId]));
-  RepoUrl := PackageRepoUrl(CheckedId);
+  PackageInfo := PackageInfoById(CheckedId);
   WritelnLog('DependencyPackages', Format(
-    'Preparing to install package "%s" from %s', [CheckedId, RepoUrl]));
-  DependencyPackagesWrite('Package repository URL is ' + RepoUrl);
+    'Preparing to install package "%s" from %s', [CheckedId, PackageInfo.RepoUrl]));
+  DependencyPackagesWrite('Package repository URL is ' + PackageInfo.RepoUrl);
+  WritePackageFeatures(PackageInfo);
   PackageIds := TStringList.Create;
   PackageIds.CaseSensitive := true;
   try
@@ -261,16 +271,18 @@ var
   Document: TXMLDocument;
   PackagesElement: TDOMElement;
   PackageIds: TStringList;
-  CheckedId, RepoUrl: String;
+  CheckedId: String;
+  PackageInfo: TPackageInfo;
 begin
   DependencyPackagesWrite(Format('Update command: manifest="%s", package="%s"',
     [ManifestFileName, PackageId]));
   CheckedId := CheckedPackageId(PackageId);
   DependencyPackagesWrite(Format('Checked package ID is "%s"', [CheckedId]));
-  RepoUrl := PackageRepoUrl(CheckedId);
+  PackageInfo := PackageInfoById(CheckedId);
   WritelnLog('DependencyPackages', Format(
-    'Preparing to update package "%s" from %s', [CheckedId, RepoUrl]));
-  DependencyPackagesWrite('Package repository URL is ' + RepoUrl);
+    'Preparing to update package "%s" from %s', [CheckedId, PackageInfo.RepoUrl]));
+  DependencyPackagesWrite('Package repository URL is ' + PackageInfo.RepoUrl);
+  WritePackageFeatures(PackageInfo);
   PackageIds := TStringList.Create;
   PackageIds.CaseSensitive := true;
   try

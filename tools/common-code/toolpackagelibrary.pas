@@ -29,6 +29,9 @@ type
     Url: String;
   end;
 
+  { Feature identifiers supported by a package. }
+  TPackageFeatureArray = array of String;
+
   { Component information from the packages library. }
   TPackageInfo = record
     { Stable package identifier. }
@@ -45,6 +48,8 @@ type
     Author: String;
     { Additional links associated with the package. }
     Links: array of TPackageLink;
+    { Features supported by the package. }
+    Features: TPackageFeatureArray;
   end;
 
   { Array of package information returned by @link(LoadPackageLibrary). }
@@ -272,6 +277,7 @@ begin
   Result.Id := '';
   Result.Author := '';
   Result.Links := nil;
+  Result.Features := nil;
   Result.Name := Trim(ReadStringArgument('title'));
   RequireComma;
   Result.Description := Trim(ReadStringArgument('description'));
@@ -287,6 +293,7 @@ var
   LibraryPackages: TJSONArray;
   PackageData: TJSONObject;
   PackageLinks: TJSONArray;
+  PackageFeatures: TJSONArray;
   LinkData: TJSONObject;
   Field: TJSONData;
   PackageInfo: TPackageInfo;
@@ -341,6 +348,23 @@ begin
         LinkData := TJSONObject(PackageLinks[J]);
         PackageInfo.Links[J].Name := RequiredString(LinkData, 'name');
         PackageInfo.Links[J].Url := RequiredString(LinkData, 'url');
+      end;
+
+      Field := PackageData.Find('features');
+      if Field = nil then
+        PackageInfo.Features := nil
+      else
+      begin
+        if Field.JSONType <> jtArray then
+          raise Exception.Create('Invalid package field "features"');
+        PackageFeatures := TJSONArray(Field);
+        SetLength(PackageInfo.Features, PackageFeatures.Count);
+        for J := 0 to PackageFeatures.Count - 1 do
+        begin
+          if PackageFeatures[J].JSONType <> jtString then
+            raise Exception.Create('Package feature must be a string');
+          PackageInfo.Features[J] := PackageFeatures[J].AsString;
+        end;
       end;
 
       Result[I] := PackageInfo;

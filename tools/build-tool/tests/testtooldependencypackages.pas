@@ -108,10 +108,10 @@ begin
       '{"packages":[' +
       '{"id":"' + FirstPackageId + '","title":"Test package one",' +
         '"description":"","image":"","page":"https://example.invalid/one",' +
-        '"author":"CGE tests","links":[]},' +
+        '"author":"CGE tests","links":[],"features":["feature-one","feature-two"]},' +
       '{"id":"' + SecondPackageId + '","title":"Test package two",' +
         '"description":"","image":"","page":"https://example.invalid/two",' +
-        '"author":"CGE tests","links":[]}' +
+        '"author":"CGE tests","links":[],"features":[]}' +
       ']}');
 
     RunBuildTool(['get-installed-packages'], 0, Output);
@@ -119,6 +119,8 @@ begin
     AssertPackages('', '');
 
     RunBuildTool(['install-package', FirstPackageId], 0, Output);
+    AssertTrue(Pos('Package feature is feature-one', Output) <> 0);
+    AssertTrue(Pos('Package feature is feature-two', Output) <> 0);
     AssertTrue(Pos('[DependencyPackages] Appended package node; writing manifest ',
       Output) <> 0);
     AssertTrue(Pos('[DependencyPackages] Manifest write completed: ',
@@ -135,6 +137,8 @@ begin
 
     ManifestBeforeUpdate := FileToString(FilenameToUriSafe(ManifestFileName));
     RunBuildTool(['update-package', FirstPackageId], 0, Output);
+    AssertTrue(Pos('Package feature is feature-one', Output) <> 0);
+    AssertTrue(Pos('Package feature is feature-two', Output) <> 0);
     AssertTrue(Pos('there is no package metadata to update', Output) <> 0);
     AssertEquals(ManifestBeforeUpdate,
       FileToString(FilenameToUriSafe(ManifestFileName)));
