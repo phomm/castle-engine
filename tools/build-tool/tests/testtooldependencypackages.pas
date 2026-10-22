@@ -19,11 +19,17 @@ unit TestToolDependencyPackages;
 interface
 
 uses
-  Classes, SysUtils, CastleTester;
+  Classes, SysUtils, DOM, CastleTester;
 
 type
   TTestToolDependencyPackages = class(TCastleTestCase)
   published
+    procedure TestGitRepositoryUrlAnalysis;
+    procedure TestGitAvailability;
+    procedure TestSeparateToolProjectDirectory;
+    procedure TestPackageDataDirectory;
+    procedure TestPackageCodeSearchPath;
+    procedure TestPackageEditorUnits;
     procedure TestCommands;
   end;
 
@@ -31,12 +37,205 @@ implementation
 
 uses
   CastleFilesUtils, CastleInternalArchitectures, CastleInternalProcess,
+  CastleXmlUtils,
   CastleUtils,
-  CastleUriUtils, ToolCommonUtils, ToolDependencyPackages;
+  CastleUriUtils, ToolCommonUtils, ToolDependencyPackages, ToolGitDownload;
 
 const
   FirstPackageId = 'test-package-one';
   SecondPackageId = 'test-package-two';
+
+procedure TTestToolDependencyPackages.TestGitRepositoryUrlAnalysis;
+var
+  Reference: TGitRepositoryReference;
+begin
+  Reference := AnalyzeGitRepositoryUrl('https://github.com/user/repository/');
+  AssertEquals('https://github.com/user/repository', Reference.RepositoryUrl);
+  AssertEquals('', Reference.Branch);
+  AssertEquals('', Reference.Path);
+
+  Reference := AnalyzeGitRepositoryUrl(
+    'https://github.com/user/repository/blob/main/src/component.pas');
+  AssertEquals('https://github.com/user/repository', Reference.RepositoryUrl);
+  AssertEquals('main', Reference.Branch);
+  AssertEquals('src/component.pas', Reference.Path);
+  AssertTrue(Reference.IsSingleFile);
+  AssertEquals('https://raw.githubusercontent.com/user/repository/main/src/component.pas',
+    Reference.RawFileUrl);
+
+  Reference := AnalyzeGitRepositoryUrl(
+    'https://github.com/user/repository/src/component.pas');
+  AssertEquals('https://github.com/user/repository', Reference.RepositoryUrl);
+  AssertEquals('', Reference.Branch);
+  AssertEquals('src/component.pas', Reference.Path);
+
+  Reference := AnalyzeGitRepositoryUrl(
+    'https://gitlab.com/user/repository/-/blob/master/src/component.pas');
+  AssertEquals('https://gitlab.com/user/repository', Reference.RepositoryUrl);
+  AssertEquals('master', Reference.Branch);
+  AssertEquals('src/component.pas', Reference.Path);
+  AssertTrue(Reference.IsSingleFile);
+  AssertEquals('', Reference.RawFileUrl);
+end;
+
+procedure TTestToolDependencyPackages.TestGitAvailability;
+var
+  ProjectDirectory: String;
+begin
+  if not IsGitInstalled then
+    Exit;
+
+  ProjectDirectory := CreateTemporaryDir;
+  try
+    AssertFalse(CanOperateGitProject(ProjectDirectory));
+    ExecuteCommandCheckStatus(ProjectDirectory, 'git', ['init']);
+    AssertTrue(CanOperateGitProject(ProjectDirectory));
+  finally
+    RemoveNonEmptyDir(ProjectDirectory);
+  end;
+end;
+
+procedure TTestToolDependencyPackages.TestSeparateToolProjectDirectory;
+var
+  Directory: String;
+begin
+  Directory := CreateTemporaryDir;
+  try
+    StringToFile(FilenameToUriSafe(CombinePaths(Directory, 'component.pas')),
+      'unit Component;');
+    AssertFalse(IsSeparateToolProjectDirectory(Directory));
+
+    StringToFile(FilenameToUriSafe(CombinePaths(Directory, 'standalone.lpi')),
+      '<CONFIG/>');
+    AssertTrue(IsSeparateToolProjectDirectory(Directory));
+    DeleteFile(CombinePaths(Directory, 'standalone.lpi'));
+
+    StringToFile(FilenameToUriSafe(CombinePaths(Directory, 'tool.dproj')),
+      '<Project/>');
+    AssertTrue(IsSeparateToolProjectDirectory(Directory));
+    DeleteFile(CombinePaths(Directory, 'tool.dproj'));
+
+    StringToFile(FilenameToUriSafe(CombinePaths(Directory, 'app.lpr')),
+      'program App;');
+    AssertTrue(IsSeparateToolProjectDirectory(Directory));
+  finally
+    RemoveNonEmptyDir(Directory);
+  end;
+end;
+
+procedure TTestToolDependencyPackages.TestPackageDataDirectory;
+const
+  DataExtensions: array [0..5] of String = (
+    '.png', '.wav', '.glsl', '.gltf', '.castle-user-interface', '.pas'
+  );
+var
+  Directory, FileName: String;
+  I: Integer;
+begin
+  Directory := CreateTemporaryDir;
+  try
+    for I := 0 to High(DataExtensions) do
+    begin
+      FileName := CombinePaths(Directory, 'asset' + DataExtensions[I]);
+      StringToFile(FilenameToUriSafe(FileName), 'test');
+      AssertEquals(I < High(DataExtensions),
+        DirectoryContainsPackageData(Directory, false, false));
+      DeleteFile(FileName);
+    end;
+
+    CheckForceDirectories(CombinePaths(Directory, 'tests'));
+    StringToFile(FilenameToUriSafe(
+      CombinePaths(Directory, 'tests' + PathDelim + 'hidden.png')), 'test');
+    AssertFalse(DirectoryContainsPackageData(Directory, true, false));
+    AssertTrue(DirectoryContainsPackageData(Directory, false, false));
+
+    CheckForceDirectories(CombinePaths(Directory, 'tools'));
+    StringToFile(FilenameToUriSafe(
+      CombinePaths(Directory, 'tools' + PathDelim + 'hidden.png')), 'test');
+    StringToFile(FilenameToUriSafe(
+      CombinePaths(Directory, 'tools' + PathDelim + 'standalone.lpi')), '<CONFIG/>');
+    AssertFalse(DirectoryContainsPackageData(Directory, true, true));
+    AssertTrue(DirectoryContainsPackageData(Directory, false, false));
+  finally
+    RemoveNonEmptyDir(Directory);
+  end;
+end;
+
+procedure TTestToolDependencyPackages.TestPackageCodeSearchPath;
+var
+  Document: TXMLDocument;
+  PackageDirectory, NestedDirectory: String;
+  CompilerOptions, SearchPaths: TDOMElement;
+  Children: TXMLElementIterator;
+  Paths: TStringList;
+begin
+  PackageDirectory := CreateTemporaryDir;
+  Document := TXMLDocument.Create;
+  try
+    Document.AppendChild(Document.CreateElement('project'));
+    NestedDirectory := CombinePaths(PackageDirectory, 'castle-bars');
+    CheckForceDirectories(NestedDirectory);
+    StringToFile(FilenameToUriSafe(CombinePaths(NestedDirectory, 'component.pas')),
+      'unit Component;');
+    StringToFile(FilenameToUriSafe(CombinePaths(PackageDirectory, 'root.pp')),
+      'unit Root;');
+    AddPackageCodeSearchPaths(Document, 'test-package', PackageDirectory);
+    AddPackageCodeSearchPaths(Document, 'test-package', PackageDirectory);
+
+    CompilerOptions := Document.DocumentElement.ChildElement('compiler_options');
+    SearchPaths := CompilerOptions.ChildElement('search_paths');
+    Children := SearchPaths.ChildrenIterator('path');
+    Paths := TStringList.Create;
+    try
+      while Children.GetNext do
+        Paths.Add(Children.Current.AttributeString('value'));
+      AssertEquals(2, Paths.Count);
+      AssertTrue(Paths.IndexOf('packages/test-package/castle-bars/') <> -1);
+      AssertTrue(Paths.IndexOf('packages/test-package/') <> -1);
+    finally
+      FreeAndNil(Paths);
+      FreeAndNil(Children);
+    end;
+  finally
+    FreeAndNil(Document);
+    RemoveNonEmptyDir(PackageDirectory);
+  end;
+end;
+
+procedure TTestToolDependencyPackages.TestPackageEditorUnits;
+var
+  Document: TXMLDocument;
+  PackageDirectory, SourceDirectory: String;
+  EditorUnits: String;
+begin
+  PackageDirectory := CreateTemporaryDir;
+  Document := TXMLDocument.Create;
+  try
+    Document.AppendChild(Document.CreateElement('project'));
+    SourceDirectory := CombinePaths(PackageDirectory, 'source-files');
+    CheckForceDirectories(SourceDirectory);
+    StringToFile(FilenameToUriSafe(CombinePaths(SourceDirectory, 'component.pas')),
+      'unit PackageComponent;' + LineEnding +
+      'initialization' + LineEnding +
+      '  RegisterSerializableComponent(TComponent, ''Component'');');
+    StringToFile(FilenameToUriSafe(CombinePaths(PackageDirectory, 'other.pp')),
+      'unit PackageOther;' + LineEnding +
+      'initialization' + LineEnding +
+      '  RegisterSerializableComponent(TOther, ''Other'');');
+    AddPackageEditorUnits(Document, PackageDirectory);
+    EditorUnits := Document.DocumentElement.AttributeString('editor_units');
+    AssertTrue(Pos('PackageComponent', EditorUnits) <> 0);
+    AssertTrue(Pos('PackageOther', EditorUnits) <> 0);
+
+    Document.DocumentElement.SetAttribute('editor_units', 'ExistingUnit, packagecomponent');
+    AddPackageEditorUnits(Document, PackageDirectory);
+    AssertEquals('ExistingUnit, packagecomponent,PackageOther',
+      Document.DocumentElement.AttributeString('editor_units'));
+  finally
+    FreeAndNil(Document);
+    RemoveNonEmptyDir(PackageDirectory);
+  end;
+end;
 
 procedure TTestToolDependencyPackages.TestCommands;
 var
@@ -127,6 +326,7 @@ begin
       Output) <> 0);
     AssertPackages(FirstPackageId, '');
     RunBuildTool(['install-package', FirstPackageId], 0, Output);
+    AssertTrue(Pos('refreshing installed package files', Output) <> 0);
     AssertPackages(FirstPackageId, '');
     RunBuildTool(['install-package', SecondPackageId], 0, Output);
     AssertPackages(FirstPackageId, SecondPackageId);

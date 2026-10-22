@@ -68,6 +68,19 @@ const
   { Legacy fallback base URL for gallery-sized package images. }
   GalleryImageBaseUrl = 'https://raw.githubusercontent.com/castle-engine/cge-www/refs/heads/master/htdocs/images/gallery_size/';
 
+  { Feature identifier for downloading package sources into packages/. }
+  PackageFeatureCopyCode = 'copy-code';
+  { Feature identifier for excluding a package from test runs. }
+  PackageFeatureSkipTest = 'skip-test';
+  { Feature identifier for excluding a package from tool builds. }
+  PackageFeatureSkipTool = 'skip-tool';
+  { Feature identifier for registering a package in the editor. }
+  PackageFeatureRegisterEditor = 'register-editor';
+  { Feature identifier for installing a package as a Git submodule. }
+  PackageFeatureGitSubmodule = 'git-submodule';
+  { Feature identifier for copying package data into a project. }
+  PackageFeatureCopyData = 'copy-data';
+
 { Parse packages from a JSON library document. }
 function ParsePackageLibraryJson(const Content: String): TPackageInfoArray;
 

@@ -35,9 +35,26 @@ castle-engine --project=path/to/project remove-package castle-bars
 ```
 
 `get-installed-packages` prints package IDs as a comma-separated list.
-Install and update resolve the package's repository URL from the packages
-library. Set `CASTLE_PACKAGES_LIBRARY_URL` to use a different JSON library
-source. Actual repository installation and updating are not implemented yet.
+Install and update resolve package metadata from the packages library. Set
+`CASTLE_PACKAGES_LIBRARY_URL` to use a different JSON library source. For a
+package with the `copy-code` feature, `install-package` places repository code
+into `packages/<package-id>` and adds every directory containing Pascal source
+files to the project manifest compiler search paths. With `register-editor`,
+units anywhere in the package that call `RegisterSerializableComponent` are
+added to the manifest's `editor_units` list. With `copy-data`, package contents go into
+`data/<package-id>`. Repository URLs may point to the whole repository or a
+directory path. A GitHub `/blob/<branch>/...` file URL is downloaded directly;
+other repository downloads require the `git` command to be available on
+`PATH`. Packages with the `skip-test` feature omit test/demo/example/sample
+directories. For `copy-code`, directories without Pascal source files
+(`.pas`/`.pp`) are also omitted. If Git is not installed, repository downloads
+are currently unsupported; GitHub single-file URLs are downloaded directly
+without Git. With `skip-tool`, directories containing standalone tool project
+files (`.lpi`, `.dpr`, `.lpr`, `.dproj`, `.cbproj`, or `.groupproj`) are omitted.
+For `copy-data`, folders are included when they contain image, audio, shader,
+or model files, or files using a `.castle-*` extension.
+Running `install-package` again refreshes files already present in the package
+destination. The separate `update-package` command is not implemented yet.
 
 ## Building
 

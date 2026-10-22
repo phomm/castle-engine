@@ -38,7 +38,7 @@
         <PackageName Value="castle_engine_base"/>
       </Item1>
     </RequiredPackages>
-    <Units Count="24">
+    <Units Count="25">
       <Unit0>
         <Filename Value="castle_engine.dpr"/>
         <IsPartOfProject Value="True"/>
@@ -146,6 +146,11 @@
         <IsPartOfProject Value="True"/>
         <UnitName Value="ToolMacOS"/>
       </Unit23>
+      <Unit24>
+        <Filename Value="code/toolgitdownload.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="ToolGitDownload"/>
+      </Unit24>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
