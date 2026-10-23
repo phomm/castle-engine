@@ -59,15 +59,6 @@ const
   { Default JSON source for the packages library. }
   DefaultPackagesLibraryUrl = 'https://raw.githubusercontent.com/phomm/cge-packages/refs/heads/main/unified.json';
 
-  { Fallback source for the packages library, used when the JSON source fails. }
-  LibraryFallbackUrl = 'https://raw.githubusercontent.com/castle-engine/cge-www/refs/heads/master/htdocs/additional_components.php';
-
-  { Legacy fallback base URL for regular package images. }
-  ImageBaseUrl = 'https://raw.githubusercontent.com/castle-engine/cge-www/refs/heads/master/htdocs/images/original_size/';
-
-  { Legacy fallback base URL for gallery-sized package images. }
-  GalleryImageBaseUrl = 'https://raw.githubusercontent.com/castle-engine/cge-www/refs/heads/master/htdocs/images/gallery_size/';
-
   { Feature identifier for downloading package sources into packages/. }
   PackageFeatureCopyCode = 'copy-code';
   { Feature identifier for excluding a package from test runs. }
@@ -84,11 +75,7 @@ const
 { Parse packages from a JSON library document. }
 function ParsePackageLibraryJson(const Content: String): TPackageInfoArray;
 
-{ Parse packages from the legacy PHP library document. }
-function ParsePackageLibraryFallback(const Content: String): TPackageInfoArray;
-
-{ Download the JSON packages library and parse it, falling back to the legacy
-  PHP library if downloading or parsing the JSON library fails. }
+{ Download the JSON packages library and parse it. }
 function LoadPackageLibrary(const Url: String): TPackageInfoArray;
 
 { Get a package image URL from the directory containing the given library URL,
@@ -98,7 +85,7 @@ function PackageLibraryImageUrl(const LibraryUrl, ImagePath: String): String;
 implementation
 
 uses
-  Classes, SysUtils, RegExpr, fpjson, jsonparser,
+  Classes, SysUtils, fpjson, jsonparser,
   CastleDownload, CastleLog;
 
 function PackageLibraryImageUrl(const LibraryUrl, ImagePath: String): String;
@@ -122,182 +109,6 @@ begin
   PathPosition := LastDelimiter('/', UrlWithoutQueryOrFragment);
   Result := Copy(UrlWithoutQueryOrFragment, 1, PathPosition) +
     'images/' + ImagePath;
-end;
-
-function ParseComponentBlock(const Block: String): TPackageInfo;
-var
-  ArgPosition: Integer;
-
-  procedure SkipWhitespaceAndComments;
-  begin
-    while ArgPosition <= Length(Block) do
-    begin
-      if Block[ArgPosition] <= ' ' then
-        Inc(ArgPosition)
-      else
-      if (Block[ArgPosition] = '/') and (ArgPosition < Length(Block)) and
-        (Block[ArgPosition + 1] = '/') then
-      begin
-        Inc(ArgPosition, 2);
-        while (ArgPosition <= Length(Block)) and
-          (Block[ArgPosition] <> #10) and (Block[ArgPosition] <> #13) do
-          Inc(ArgPosition);
-      end else
-      if (Block[ArgPosition] = '/') and (ArgPosition < Length(Block)) and
-        (Block[ArgPosition + 1] = '*') then
-      begin
-        Inc(ArgPosition, 2);
-        while (ArgPosition < Length(Block)) and
-          ((Block[ArgPosition] <> '*') or (Block[ArgPosition + 1] <> '/')) do
-          Inc(ArgPosition);
-        if ArgPosition < Length(Block) then
-          Inc(ArgPosition, 2);
-      end else
-      if Block[ArgPosition] = '#' then
-      begin
-        while (ArgPosition <= Length(Block)) and
-          (Block[ArgPosition] <> #10) and (Block[ArgPosition] <> #13) do
-          Inc(ArgPosition);
-      end else
-        Exit;
-    end;
-  end;
-
-  function ReadStringArgument(const ArgumentName: String): String;
-  var
-    QuoteChar: Char;
-    ParenthesisDepth: Integer;
-    IsTopLevelString: Boolean;
-    ClosedString: Boolean;
-    SawTopLevelString: Boolean;
-  begin
-    SkipWhitespaceAndComments;
-    if ArgPosition > Length(Block) then
-      raise Exception.Create('Missing ' + ArgumentName + ' argument in gallery_link');
-    Result := '';
-    ParenthesisDepth := 0;
-    SawTopLevelString := false;
-    while ArgPosition <= Length(Block) do
-    begin
-      if (Block[ArgPosition] = '/') and (ArgPosition < Length(Block)) and
-        (Block[ArgPosition + 1] = '/') then
-      begin
-        Inc(ArgPosition, 2);
-        while (ArgPosition <= Length(Block)) and
-          (Block[ArgPosition] <> #10) and (Block[ArgPosition] <> #13) do
-          Inc(ArgPosition);
-      end else
-      if (Block[ArgPosition] = '/') and (ArgPosition < Length(Block)) and
-        (Block[ArgPosition + 1] = '*') then
-      begin
-        Inc(ArgPosition, 2);
-        while (ArgPosition < Length(Block)) and
-          ((Block[ArgPosition] <> '*') or (Block[ArgPosition + 1] <> '/')) do
-          Inc(ArgPosition);
-        if ArgPosition < Length(Block) then
-          Inc(ArgPosition, 2);
-      end else
-      if Block[ArgPosition] = '#' then
-      begin
-        while (ArgPosition <= Length(Block)) and
-          (Block[ArgPosition] <> #10) and (Block[ArgPosition] <> #13) do
-          Inc(ArgPosition);
-      end else
-      if (Block[ArgPosition] = '''') or (Block[ArgPosition] = '"') then
-      begin
-        QuoteChar := Block[ArgPosition];
-        IsTopLevelString := ParenthesisDepth = 0;
-        ClosedString := false;
-        if IsTopLevelString then
-          SawTopLevelString := true;
-        Inc(ArgPosition);
-        while ArgPosition <= Length(Block) do
-        begin
-          if Block[ArgPosition] = '\' then
-          begin
-            if ArgPosition < Length(Block) then
-            begin
-              Inc(ArgPosition);
-              if (Block[ArgPosition] = QuoteChar) or
-                (Block[ArgPosition] = '\') then
-              begin
-                if IsTopLevelString then
-                  Result += Block[ArgPosition];
-              end else
-              begin
-                if IsTopLevelString then
-                begin
-                  Result += '\';
-                  Result += Block[ArgPosition];
-                end;
-              end;
-              Inc(ArgPosition);
-            end else
-            begin
-              if IsTopLevelString then
-                Result += '\';
-              Inc(ArgPosition);
-            end;
-          end else
-          if Block[ArgPosition] = QuoteChar then
-          begin
-            Inc(ArgPosition);
-            ClosedString := true;
-            Break;
-          end else
-          begin
-            if IsTopLevelString then
-              Result += Block[ArgPosition];
-            Inc(ArgPosition);
-          end;
-        end;
-        if not ClosedString then
-          raise Exception.Create('Unterminated ' + ArgumentName +
-            ' string in gallery_link');
-      end else
-      if Block[ArgPosition] = '(' then
-      begin
-        Inc(ParenthesisDepth);
-        Inc(ArgPosition);
-      end else
-      if Block[ArgPosition] = ')' then
-      begin
-        if ParenthesisDepth = 0 then
-          Break;
-        Dec(ParenthesisDepth);
-        Inc(ArgPosition);
-      end else
-      if (Block[ArgPosition] = ',') and (ParenthesisDepth = 0) then
-        Break
-      else
-        Inc(ArgPosition);
-    end;
-    if not SawTopLevelString then
-      raise Exception.Create('No string value found for ' + ArgumentName +
-        ' argument in gallery_link');
-  end;
-
-  procedure RequireComma;
-  begin
-    SkipWhitespaceAndComments;
-    if (ArgPosition > Length(Block)) or (Block[ArgPosition] <> ',') then
-      raise Exception.Create('Expected comma between gallery_link arguments');
-    Inc(ArgPosition);
-  end;
-
-begin
-  ArgPosition := 1;
-  Result.Id := '';
-  Result.Author := '';
-  Result.Links := nil;
-  Result.Features := nil;
-  Result.Name := Trim(ReadStringArgument('title'));
-  RequireComma;
-  Result.Description := Trim(ReadStringArgument('description'));
-  RequireComma;
-  Result.ImageUrl := Trim(ReadStringArgument('image'));
-  RequireComma;
-  Result.RepoUrl := Trim(ReadStringArgument('page'));
 end;
 
 function ParsePackageLibraryJson(const Content: String): TPackageInfoArray;
@@ -388,52 +199,6 @@ begin
   end;
 end;
 
-function ParsePackageLibraryFallback(const Content: String): TPackageInfoArray;
-var
-  Regex: TRegExpr;
-  BlockStart, BlockEnd: Integer;
-  Block: String;
-  PackageInfo: TPackageInfo;
-begin
-  Result := nil;
-  Regex := TRegExpr.Create;
-  try
-    Regex.ModifierM := true;
-    Regex.ModifierG := true;
-    Regex.Expression := '<\?php\s+gallery_link\s*\(';
-
-    if Regex.Exec(Content) then
-    begin
-      repeat
-        BlockStart := Regex.MatchPos[0] + Regex.MatchLen[0];
-
-        { Find the end of the PHP block }
-        BlockEnd := BlockStart;
-        while (BlockEnd < Length(Content)) and
-          (Copy(Content, BlockEnd, 2) <> '?>') do
-          Inc(BlockEnd);
-
-        if BlockEnd < Length(Content) then
-        begin
-          Block := Copy(Content, BlockStart, BlockEnd - BlockStart);
-          PackageInfo := ParseComponentBlock(Block);
-
-          if (PackageInfo.Name <> '') and (PackageInfo.ImageUrl <> '') then
-          begin
-            SetLength(Result, Length(Result) + 1);
-            Result[High(Result)] := PackageInfo;
-            WritelnLog('PackageLibrary', 'Found component: ' + PackageInfo.Name);
-          end;
-        end;
-      until not Regex.ExecNext;
-    end;
-    if Length(Result) = 0 then
-      raise Exception.Create('No gallery_link components found in fallback library');
-  finally
-    Regex.Free;
-  end;
-end;
-
 function DownloadContent(const Url: String): String;
 var
   DownloadStream: TStream;
@@ -456,33 +221,10 @@ begin
   PreviousEnableBlockingDownloads := EnableBlockingDownloads;
   EnableBlockingDownloads := true;
   try
-    try
-      WritelnLog('PackageLibrary', 'Downloading library from: ' + Url);
-      Content := DownloadContent(Url);
-      WritelnLog('PackageLibrary', 'Downloaded ' + IntToStr(Length(Content)) + ' bytes');
-      Result := ParsePackageLibraryJson(Content);
-    except
-      on E: Exception do
-      begin
-        WritelnWarning('PackageLibrary', 'Failed to download/parse JSON library: ' +
-          E.Message + '; trying fallback URL');
-        try
-          WritelnLog('PackageLibrary', 'Downloading fallback library from: ' +
-            LibraryFallbackUrl);
-          Content := DownloadContent(LibraryFallbackUrl);
-          WritelnLog('PackageLibrary', 'Downloaded ' + IntToStr(Length(Content)) + ' bytes');
-          Result := ParsePackageLibraryFallback(Content);
-        except
-          on FallbackException: Exception do
-          begin
-            WritelnWarning('PackageLibrary', 'Failed to download/parse fallback library: ' +
-              FallbackException.Message);
-            raise Exception.Create('JSON library failed: ' + E.Message +
-              '; fallback library failed: ' + FallbackException.Message);
-          end;
-        end;
-      end;
-    end;
+    WritelnLog('PackageLibrary', 'Downloading library from: ' + Url);
+    Content := DownloadContent(Url);
+    WritelnLog('PackageLibrary', 'Downloaded ' + IntToStr(Length(Content)) + ' bytes');
+    Result := ParsePackageLibraryJson(Content);
   finally
     EnableBlockingDownloads := PreviousEnableBlockingDownloads;
   end;

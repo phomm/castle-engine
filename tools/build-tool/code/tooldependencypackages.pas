@@ -47,7 +47,7 @@ procedure AddPackageEditorUnits(const Document: TXMLDocument;
   Package metadata, including its supported features, is read from the package library. }
 procedure UpdatePackage(const ManifestFileName, PackageId: String);
 
-{ Remove a dependency package ID from the project manifest. }
+{ Remove a dependency package and its installed files from the project. }
 procedure RemovePackage(const ManifestFileName, PackageId: String);
 
 implementation
@@ -352,18 +352,13 @@ begin
   end;
 end;
 
-procedure AddPackageEditorUnits(const Document: TXMLDocument;
-  const PackageDirectory: String);
+procedure CollectPackageEditorUnits(const PackageDirectory: String;
+  const UnitNames: TStrings);
 var
   Search: TSearchRec;
   SearchResult: Integer;
-  EntryName, FileName, Contents, Extension: String;
+  EntryName, FileName, Contents, Extension, UnitName: String;
 begin
-  if not DirectoryExists(PackageDirectory) then
-    raise Exception.CreateFmt(
-      'Package directory "%s" is required by the register-editor feature',
-      [PackageDirectory]);
-
   SearchResult := FindFirst(IncludeTrailingPathDelimiter(PackageDirectory) + '*',
     faAnyFile, Search);
   if SearchResult <> 0 then
@@ -375,7 +370,7 @@ begin
       begin
         FileName := CombinePaths(PackageDirectory, EntryName);
         if (Search.Attr and faDirectory) <> 0 then
-          AddPackageEditorUnits(Document, FileName)
+          CollectPackageEditorUnits(FileName, UnitNames)
         else
         begin
           Extension := LowerCase(ExtractFileExt(EntryName));
@@ -384,13 +379,115 @@ begin
             Contents := FileToString(FilenameToUriSafe(FileName));
             if Pos('registerserializablecomponent',
               LowerCase(Contents)) <> 0 then
-              AddEditorUnit(Document, PascalUnitName(FileName, Contents));
+            begin
+              UnitName := PascalUnitName(FileName, Contents);
+              if UnitNames.IndexOf(UnitName) = -1 then
+                UnitNames.Add(UnitName);
+            end;
           end;
         end;
       end;
       SearchResult := FindNext(Search);
     until SearchResult <> 0;
   finally FindClose(Search) end;
+end;
+
+procedure AddPackageEditorUnits(const Document: TXMLDocument;
+  const PackageDirectory: String);
+var
+  UnitNames: TStringList;
+  I: Integer;
+begin
+  if not DirectoryExists(PackageDirectory) then
+    raise Exception.CreateFmt(
+      'Package directory "%s" is required by the register-editor feature',
+      [PackageDirectory]);
+
+  UnitNames := TStringList.Create;
+  try
+    CollectPackageEditorUnits(PackageDirectory, UnitNames);
+    for I := 0 to UnitNames.Count - 1 do
+      AddEditorUnit(Document, UnitNames[I]);
+  finally FreeAndNil(UnitNames) end;
+end;
+
+procedure RemovePackageEditorUnits(const Document: TXMLDocument;
+  const UnitNames: TStrings);
+var
+  CurrentUnits, UnitListEntry, RemainingUnits: String;
+  StartPosition, SeparatorPosition, I: Integer;
+  RemoveUnit: Boolean;
+begin
+  if UnitNames.Count = 0 then
+    Exit;
+  CurrentUnits := Document.DocumentElement.AttributeStringDef('editor_units', '');
+  StartPosition := 1;
+  RemainingUnits := '';
+  while StartPosition <= Length(CurrentUnits) do
+  begin
+    SeparatorPosition := Pos(',', Copy(CurrentUnits, StartPosition, MaxInt));
+    if SeparatorPosition = 0 then
+    begin
+      UnitListEntry := Trim(Copy(CurrentUnits, StartPosition, MaxInt));
+      StartPosition := Length(CurrentUnits) + 1;
+    end else
+    begin
+      UnitListEntry := Trim(Copy(CurrentUnits, StartPosition,
+        SeparatorPosition - 1));
+      Inc(StartPosition, SeparatorPosition);
+    end;
+
+    RemoveUnit := false;
+    for I := 0 to UnitNames.Count - 1 do
+      if SameText(UnitListEntry, UnitNames[I]) then
+      begin
+        RemoveUnit := true;
+        Break;
+      end;
+    if not RemoveUnit and (UnitListEntry <> '') then
+    begin
+      if RemainingUnits <> '' then
+        RemainingUnits += ',';
+      RemainingUnits += UnitListEntry;
+    end;
+  end;
+
+  if RemainingUnits <> CurrentUnits then
+    Document.DocumentElement.SetAttribute('editor_units',
+      UTF8Decode(RemainingUnits));
+end;
+
+procedure RemovePackageCodeSearchPaths(const Document: TXMLDocument;
+  const PackageId: String);
+var
+  CompilerOptions, SearchPaths: TDOMElement;
+  CurrentNode, NextNode: TDOMNode;
+  PackageSearchPath, PathValue: String;
+begin
+  CompilerOptions := Document.DocumentElement.ChildElement(
+    'compiler_options', false);
+  if CompilerOptions = nil then
+    Exit;
+  SearchPaths := CompilerOptions.ChildElement('search_paths', false);
+  if SearchPaths = nil then
+    Exit;
+
+  PackageSearchPath := 'packages/' + CheckedPackageDirectoryName(PackageId) + '/';
+  CurrentNode := SearchPaths.FirstChild;
+  while CurrentNode <> nil do
+  begin
+    NextNode := CurrentNode.NextSibling;
+    if (CurrentNode is TDOMElement) and
+      (TDOMElement(CurrentNode).TagName = 'path') then
+    begin
+      PathValue := StringReplace(
+        TDOMElement(CurrentNode).AttributeString('value'), '\', '/',
+        [rfReplaceAll]);
+      if Copy(PathValue, 1, Length(PackageSearchPath)) = PackageSearchPath then
+        SearchPaths.RemoveChild(CurrentNode);
+    end;
+    CurrentNode := NextNode;
+  end;
 end;
 
 function PackageInfoById(const PackageId: String): TPackageInfo;
@@ -583,8 +680,8 @@ var
   Document: TXMLDocument;
   PackagesElement, PackageElement: TDOMElement;
   ChildElements: TXMLElementIterator;
-  PackageIds: TStringList;
-  CheckedId: String;
+  PackageIds, PackageEditorUnits: TStringList;
+  CheckedId, ProjectDirectory, CodeDirectory, DataDirectory: String;
 begin
   DependencyPackagesWrite(Format('Remove command: manifest="%s", package="%s"',
     [ManifestFileName, PackageId]));
@@ -592,11 +689,23 @@ begin
   DependencyPackagesWrite(Format('Checked package ID is "%s"', [CheckedId]));
   PackageIds := TStringList.Create;
   PackageIds.CaseSensitive := true;
+  PackageEditorUnits := TStringList.Create;
+  PackageEditorUnits.CaseSensitive := false;
   try
     LoadPackages(ManifestFileName, Document, PackagesElement, PackageIds, false);
     try
       if PackageIds.IndexOf(CheckedId) = -1 then
         raise Exception.CreateFmt('Package "%s" is not installed', [CheckedId]);
+
+      ProjectDirectory := ExtractFileDir(ExpandFileName(ManifestFileName));
+      CodeDirectory := CombinePaths(ProjectDirectory,
+        CombinePaths('packages', CheckedPackageDirectoryName(CheckedId)));
+      DataDirectory := CombinePaths(ProjectDirectory,
+        CombinePaths('data', CheckedPackageDirectoryName(CheckedId)));
+      if DirectoryExists(CodeDirectory) then
+        CollectPackageEditorUnits(CodeDirectory, PackageEditorUnits);
+      RemovePackageEditorUnits(Document, PackageEditorUnits);
+      RemovePackageCodeSearchPaths(Document, CheckedId);
 
       ChildElements := PackagesElement.ChildrenIterator(DependencyPackageElementName);
       try
@@ -619,12 +728,29 @@ begin
           [DependencyPackagesElementName]));
         Document.DocumentElement.RemoveChild(PackagesElement);
       end;
+
+      if DirectoryExists(CodeDirectory) then
+      begin
+        DependencyPackagesWrite('Removing package code directory "' +
+          CodeDirectory + '"');
+        RemoveNonEmptyDir(CodeDirectory);
+      end;
+      if DirectoryExists(DataDirectory) then
+      begin
+        DependencyPackagesWrite('Removing package data directory "' +
+          DataDirectory + '"');
+        RemoveNonEmptyDir(DataDirectory);
+      end;
+
       DependencyPackagesWrite('Writing manifest "' + ManifestFileName + '"');
       WriteXMLFile(Document, ManifestFileName);
       DependencyPackagesWrite('Manifest write completed: "' +
         ManifestFileName + '"');
     finally FreeAndNil(Document) end;
-  finally FreeAndNil(PackageIds) end;
+  finally
+    FreeAndNil(PackageEditorUnits);
+    FreeAndNil(PackageIds);
+  end;
 end;
 
 end.

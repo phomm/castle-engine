@@ -30,6 +30,7 @@ type
     procedure TestPackageDataDirectory;
     procedure TestPackageCodeSearchPath;
     procedure TestPackageEditorUnits;
+    procedure TestRemovePackageFilesAndManifest;
     procedure TestCommands;
   end;
 
@@ -234,6 +235,78 @@ begin
   finally
     FreeAndNil(Document);
     RemoveNonEmptyDir(PackageDirectory);
+  end;
+end;
+
+procedure TTestToolDependencyPackages.TestRemovePackageFilesAndManifest;
+var
+  ProjectDirectory, ManifestFileName, CodeDirectory, DataDirectory: String;
+  Document: TXMLDocument;
+  SearchPaths: TDOMElement;
+  PathElements: TXMLElementIterator;
+  Paths: TStringList;
+begin
+  ProjectDirectory := CreateTemporaryDir;
+  try
+    ManifestFileName := CombinePaths(ProjectDirectory, 'CastleEngineManifest.xml');
+    StringToFile(FilenameToUriSafe(ManifestFileName),
+      '<?xml version="1.0" encoding="utf-8"?>' + LineEnding +
+      '<project name="remove-package-test" editor_units="' +
+        'ExistingUnit,PackageComponent,PackageOther">' +
+      '<dependency_packages>' +
+        '<package>' + FirstPackageId + '</package>' +
+        '<package>' + SecondPackageId + '</package>' +
+      '</dependency_packages>' +
+      '<compiler_options><search_paths>' +
+        '<path value="packages/' + FirstPackageId + '/"/>' +
+        '<path value="packages/' + FirstPackageId + '/source-files/"/>' +
+        '<path value="packages/' + SecondPackageId + '/"/>' +
+        '<path value="other/"/>' +
+      '</search_paths></compiler_options></project>' + LineEnding);
+
+    CodeDirectory := CombinePaths(ProjectDirectory,
+      CombinePaths('packages', FirstPackageId));
+    CheckForceDirectories(CombinePaths(CodeDirectory, 'source-files'));
+    StringToFile(FilenameToUriSafe(CombinePaths(
+      CombinePaths(CodeDirectory, 'source-files'), 'component.pas')),
+      'unit PackageComponent;' + LineEnding +
+      'initialization' + LineEnding +
+      '  RegisterSerializableComponent(TComponent, ''Component'');');
+
+    DataDirectory := CombinePaths(ProjectDirectory,
+      CombinePaths('data', FirstPackageId));
+    CheckForceDirectories(DataDirectory);
+    StringToFile(FilenameToUriSafe(CombinePaths(DataDirectory, 'asset.txt')),
+      'package data');
+
+    RemovePackage(ManifestFileName, FirstPackageId);
+
+    AssertFalse(DirectoryExists(CodeDirectory));
+    AssertFalse(DirectoryExists(DataDirectory));
+
+    URLReadXML(Document, FilenameToUriSafe(ManifestFileName));
+    try
+      AssertEquals('ExistingUnit,PackageOther',
+        Document.DocumentElement.AttributeString('editor_units'));
+      SearchPaths := Document.DocumentElement.ChildElement(
+        'compiler_options').ChildElement('search_paths');
+      PathElements := SearchPaths.ChildrenIterator('path');
+      Paths := TStringList.Create;
+      try
+        while PathElements.GetNext do
+          Paths.Add(PathElements.Current.AttributeString('value'));
+        AssertEquals(2, Paths.Count);
+        AssertEquals('packages/' + SecondPackageId + '/', Paths[0]);
+        AssertEquals('other/', Paths[1]);
+      finally
+        FreeAndNil(Paths);
+        FreeAndNil(PathElements);
+      end;
+    finally
+      FreeAndNil(Document);
+    end;
+  finally
+    RemoveNonEmptyDir(ProjectDirectory);
   end;
 end;
 
