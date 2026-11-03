@@ -17,24 +17,18 @@
 (*CastleWindow backend using Lazarus LCL or Delphi FMX underneath.
 
   *Should* work with all platforms,
-  all LCL widgetsets,
-  all Delphi FMX platforms.
+  - all LCL widgetsets,
+  - all Delphi FMX platforms.
 
-  Note that there are a few TODOs in this file, for some specific Delphi (FMX)
-  or FPC / Lazarus (LCL) backends. Things are not perfect on their end always,
-  there are platform-specific edge cases.
-  We still try to support all LCL and FMX widgetsets here, *but*
-  we focus our testing on platforms where we actually use this backend by default.
+  We focus our testing on platforms where we actually use this backend by default.
   This means right now:
 
-  - Delphi/Linux,
-    Delphi/Android,
-    TODO: likely we will use it too for Delphi/iOS,
-    TODO: likely we will use it too for Delphi/macOS
+  - Delphi with all non-Windows platforms
+    (see https://castle-engine.io/delphi_mobile ,
+    https://castle-engine.io/delphi_linux ,
+    https://castle-engine.io/delphi_macos )
 
-    They all use FireMonkey (FMX).
-
-  Historically, it was useful also with some LCL backends (e.g. we depended on
+  Historically, this was useful also with some LCL backends (e.g. we depended on
   this for FPC/macOS for a long time, before we implemented castlewindow_cocoa.inc).
   And it may be useful with more platforms in the future, both LCL and FMX.
 
@@ -150,16 +144,13 @@
 
 { Handle FMX safe area (TCustomForm.OnSafeAreaChanged) to set
   Container.SafeBorder on mobile platforms.
-  FMX reports the safe area only on Android and iOS.
-  We could use this for other platforms too (they report nothing)...
-  but it would break compatibility with older Delphi versions,
-  as for Windows we allow even Delphi 10.2.1
-  (see https://castle-engine.io/delphi#_delphi_versions_supported )
-  and it doesn't have FMX API for safe area detection.
+  FMX reports the safe area only on Android and iOS, but it is safe to just
+  enable on all platforms.
 
-  TODO: This should really be a version-check, not platform check.
-  We need to find Delphi version that added OnSafeAreaChanged. }
-{$if defined(DELPHI) and (defined(ANDROID) or defined(IOS))}
+  The necessary event (OnSafeAreaChanged) was only added in Delphi 13.1, it seems
+  ( https://en.delphipraxis.net/topic/11938-android-15-and-edge-to-edge-enforcement/?page=2 ,
+  discussion after 13.1 shipped; I didn't find any better resource). }
+{$if defined(DELPHI) and (CompilerVersion >= 38) or Declared(RTLVersion131)}
   {$define HANDLE_FMX_SAFE_AREA}
 {$endif}
 

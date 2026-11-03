@@ -27,6 +27,7 @@ type
     ButtonOpenCgePath: TButton;
     ButtonRegisterLazarusPackages: TButton;
     ButtonPanel1: TButtonPanel;
+    CheckBoxMSBuildDontPassEnginePaths: TCheckBox;
     CheckBoxMuteOnRun: TCheckBox;
     CheckBoxPackagesLibraryUrlOverride: TCheckBox;
     DirectoryEditAndroidHome: TDirectoryEdit;
@@ -51,6 +52,8 @@ type
     LabelCodeEditorLazarus: TLabel;
     LabelCodeEditorDelphi: TLabel;
     LabelCompilerFpc: TLabel;
+    LabelDontPassEnginePathsDocsWww: TLabel;
+    LabelDontPassEnginePathsHint: TLabel;
     LabelCodeEditorVSCode: TLabel;
     LabelCgePath: TLabel;
     LabelCgePathAutoDetected: TLabel;
@@ -110,6 +113,7 @@ type
     procedure FormCloseQuery(Sender: TObject; var CanClose: boolean);
     procedure FormShow(Sender: TObject);
     procedure LabelAndroidDocsWwwClick(Sender: TObject);
+    procedure LabelDontPassEnginePathsDocsWwwClick(Sender: TObject);
     procedure LabelLazarusWebsiteClick(Sender: TObject);
     procedure ListPagesClick(Sender: TObject);
     procedure RadioCodeEditorAnyChange(Sender: TObject);
@@ -329,6 +333,7 @@ begin
     coDelphi    : RadioCompilerDelphi.Checked := true;
     else raise EInternalError.Create('Compiler?');
   end;
+  CheckBoxMSBuildDontPassEnginePaths.Checked := MSBuildDontPassEnginePaths;
 
   // sound tab
   TrackVolume.Position := Round(EditorVolume * TrackVolume.Max);
@@ -338,6 +343,11 @@ end;
 procedure TPreferencesForm.LabelAndroidDocsWwwClick(Sender: TObject);
 begin
   OpenUrl('https://castle-engine.io/android');
+end;
+
+procedure TPreferencesForm.LabelDontPassEnginePathsDocsWwwClick(Sender: TObject);
+begin
+  OpenUrl('https://castle-engine.io/delphi_packages');
 end;
 
 procedure TPreferencesForm.FormClose(Sender: TObject;
@@ -412,6 +422,7 @@ begin
       Compiler := coDelphi
     else
       raise EInternalError.Create('Cannot determine Compiler choice, no radio selected');
+    MSBuildDontPassEnginePaths := CheckBoxMSBuildDontPassEnginePaths.Checked;
 
     // sound tab
     EditorVolume := TrackVolume.Position / TrackVolume.Max;
