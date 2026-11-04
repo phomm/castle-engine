@@ -26,6 +26,7 @@ type
   published
     procedure TestGitRepositoryUrlAnalysis;
     procedure TestGitAvailability;
+    procedure TestDownloadPackageFromLocalRepository;
     procedure TestSeparateToolProjectDirectory;
     procedure TestPackageDataDirectory;
     procedure TestPackageCodeSearchPath;
@@ -38,13 +39,61 @@ implementation
 
 uses
   CastleFilesUtils, CastleInternalArchitectures, CastleInternalProcess,
+  CastleFindFiles,
   CastleXmlUtils,
   CastleUtils,
-  CastleUriUtils, ToolCommonUtils, ToolDependencyPackages, ToolGitDownload;
+  CastleUriUtils, ToolCommonUtils, ToolDependencyPackages, ToolGitDownload,
+  ToolPackageLibrary,
+  {$ifdef MSWINDOWS} Windows {$else} BaseUnix {$endif};
 
 const
   FirstPackageId = 'test-package-one';
   SecondPackageId = 'test-package-two';
+  GitConfigCountName = 'GIT_CONFIG_COUNT';
+
+procedure SetTestEnvironmentVariable(const Name, Value: String);
+begin
+  {$ifdef MSWINDOWS}
+  if Value = '' then
+  begin
+    if not Windows.SetEnvironmentVariable(PChar(Name), nil) then
+      RaiseLastOSError;
+  end else
+  if not Windows.SetEnvironmentVariable(PChar(Name), PChar(Value)) then
+    RaiseLastOSError;
+  {$else}
+  if Value = '' then
+  begin
+    if fpUnsetEnv(PChar(Name)) <> 0 then
+      RaiseLastOSError;
+  end else
+  if fpSetEnv(PChar(Name), PChar(Value), 1) <> 0 then
+    RaiseLastOSError;
+  {$endif}
+end;
+
+procedure ClearReadOnlyAttributesRecursive(const Directory: String);
+var
+  FileInfos: TFileInfoList;
+  FileInfo: TFileInfo;
+  I: Integer;
+  EntryPath: String;
+begin
+  FileInfos := FindFilesList(Directory, '*', true, []);
+  try
+    for I := 0 to FileInfos.Count - 1 do
+    begin
+      FileInfo := FileInfos[I];
+      EntryPath := CombinePaths(Directory, FileInfo.Name);
+      if FileInfo.Directory then
+        ClearReadOnlyAttributesRecursive(EntryPath)
+      else
+        FileSetAttr(EntryPath, FileGetAttr(EntryPath) and not faReadOnly);
+    end;
+  finally FreeAndNil(FileInfos) end;
+
+  FileSetAttr(Directory, FileGetAttr(Directory) and not faReadOnly);
+end;
 
 procedure TTestToolDependencyPackages.TestGitRepositoryUrlAnalysis;
 var
@@ -96,6 +145,124 @@ begin
   end;
 end;
 
+procedure TTestToolDependencyPackages.TestDownloadPackageFromLocalRepository;
+const
+  TestRepositoryUrl = 'https://github.com/castle-engine-test/integration';
+var
+  ProjectDirectory, RepositoryDirectory, CodeDirectory, DataDirectory: String;
+  GitConfigCount, GitConfigKey, GitConfigValue: String;
+  GitConfigKeyName, GitConfigValueName: String;
+  PackageInfo: TPackageInfo;
+  StagingDirectoriesBefore, StagingDirectoriesAfter: TFileInfoList;
+begin
+  if not IsGitInstalled then
+  begin
+    AbortTest;
+    Exit;
+  end;
+
+  ProjectDirectory := CreateTemporaryDir;
+  try
+    RepositoryDirectory := CombinePaths(ProjectDirectory, 'repository');
+    CheckForceDirectories(RepositoryDirectory);
+    CheckForceDirectories(CombinePaths(RepositoryDirectory,
+      'src' + PathDelim + 'nested'));
+    CheckForceDirectories(CombinePaths(RepositoryDirectory, 'assets'));
+    CheckForceDirectories(CombinePaths(RepositoryDirectory, 'tests'));
+    CheckForceDirectories(CombinePaths(RepositoryDirectory, 'demo'));
+    CheckForceDirectories(CombinePaths(RepositoryDirectory,
+      'tools' + PathDelim + 'standalone'));
+    StringToFile(FilenameToUriSafe(
+      CombinePaths(RepositoryDirectory, 'README.md')),
+      'Local repository used by package-download integration test');
+    StringToFile(FilenameToUriSafe(CombinePaths(RepositoryDirectory,
+      'src' + PathDelim + 'component.pas')), 'unit PackageComponent;');
+    StringToFile(FilenameToUriSafe(CombinePaths(RepositoryDirectory,
+      'src' + PathDelim + 'nested' + PathDelim + 'nestedcomponent.pp')),
+      'unit NestedPackageComponent;');
+    StringToFile(FilenameToUriSafe(CombinePaths(RepositoryDirectory,
+      'assets' + PathDelim + 'image.png')), 'test image data');
+    StringToFile(FilenameToUriSafe(CombinePaths(RepositoryDirectory,
+      'tests' + PathDelim + 'ignored.pas')), 'unit IgnoredTest;');
+    StringToFile(FilenameToUriSafe(CombinePaths(RepositoryDirectory,
+      'demo' + PathDelim + 'ignored.png')), 'test image data');
+    StringToFile(FilenameToUriSafe(CombinePaths(RepositoryDirectory,
+      'tools' + PathDelim + 'standalone' + PathDelim + 'standalone.lpi')),
+      '<CONFIG/>');
+    StringToFile(FilenameToUriSafe(CombinePaths(RepositoryDirectory,
+      'tools' + PathDelim + 'standalone' + PathDelim + 'ignored.pas')),
+      'unit StandaloneTool;');
+
+    ExecuteCommandCheckStatus(RepositoryDirectory, 'git', ['init']);
+    ExecuteCommandCheckStatus(RepositoryDirectory, 'git', ['add', '.']);
+    ExecuteCommandCheckStatus(RepositoryDirectory, 'git',
+      ['-c', 'user.name=Castle Engine tests', '-c',
+       'user.email=cge-tests@example.invalid', 'commit', '-m',
+       'Initial package test repository']);
+
+    GitConfigCount := SysUtils.GetEnvironmentVariable(GitConfigCountName);
+    GitConfigKeyName := 'GIT_CONFIG_KEY_0';
+    GitConfigValueName := 'GIT_CONFIG_VALUE_0';
+    GitConfigKey := SysUtils.GetEnvironmentVariable(GitConfigKeyName);
+    GitConfigValue := SysUtils.GetEnvironmentVariable(GitConfigValueName);
+    StagingDirectoriesBefore := FindFilesList(GetTempDir(false),
+      'castle-package-*', true, []);
+    try
+      SetTestEnvironmentVariable(GitConfigCountName, '1');
+      SetTestEnvironmentVariable(GitConfigKeyName,
+        'url.' + FilenameToUriSafe(RepositoryDirectory) + '.insteadOf');
+      SetTestEnvironmentVariable(GitConfigValueName, TestRepositoryUrl);
+
+      PackageInfo.Id := 'download-integration-test';
+      PackageInfo.RepoUrl := TestRepositoryUrl;
+      SetLength(PackageInfo.Features, 4);
+      PackageInfo.Features[0] := PackageFeatureCopyCode;
+      PackageInfo.Features[1] := PackageFeatureCopyData;
+      PackageInfo.Features[2] := PackageFeatureSkipTest;
+      PackageInfo.Features[3] := PackageFeatureSkipTool;
+
+      DownloadPackage(PackageInfo, ProjectDirectory);
+
+      CodeDirectory := CombinePaths(ProjectDirectory,
+        'packages' + PathDelim + PackageInfo.Id);
+      DataDirectory := CombinePaths(ProjectDirectory,
+        'data' + PathDelim + PackageInfo.Id);
+      AssertTrue(FileExists(CombinePaths(CodeDirectory,
+        'src' + PathDelim + 'component.pas')));
+      AssertTrue(FileExists(CombinePaths(CodeDirectory,
+        'src' + PathDelim + 'nested' + PathDelim + 'nestedcomponent.pp')));
+      AssertTrue(FileExists(CombinePaths(DataDirectory,
+        'assets' + PathDelim + 'image.png')));
+      AssertFalse(FileExists(CombinePaths(CodeDirectory,
+        'tests' + PathDelim + 'ignored.pas')));
+      AssertFalse(FileExists(CombinePaths(DataDirectory,
+        'tests' + PathDelim + 'ignored.pas')));
+      AssertFalse(FileExists(CombinePaths(CodeDirectory,
+        'demo' + PathDelim + 'ignored.png')));
+      AssertFalse(FileExists(CombinePaths(DataDirectory,
+        'demo' + PathDelim + 'ignored.png')));
+      AssertFalse(DirectoryExists(CombinePaths(CodeDirectory,
+        'tools' + PathDelim + 'standalone')));
+      AssertFalse(DirectoryExists(CombinePaths(DataDirectory,
+        'tools' + PathDelim + 'standalone')));
+
+      StagingDirectoriesAfter := FindFilesList(GetTempDir(false),
+        'castle-package-*', true, []);
+      try
+        AssertEquals(StagingDirectoriesBefore.Count, StagingDirectoriesAfter.Count);
+      finally FreeAndNil(StagingDirectoriesAfter) end;
+    finally
+      SetTestEnvironmentVariable(GitConfigCountName, GitConfigCount);
+      SetTestEnvironmentVariable(GitConfigKeyName, GitConfigKey);
+      SetTestEnvironmentVariable(GitConfigValueName, GitConfigValue);
+      FreeAndNil(StagingDirectoriesBefore);
+    end;
+  finally
+    ClearReadOnlyAttributesRecursive(ProjectDirectory);
+    RemoveNonEmptyDir(ProjectDirectory);
+  end;
+end;
+
 procedure TTestToolDependencyPackages.TestSeparateToolProjectDirectory;
 var
   Directory: String;
@@ -109,12 +276,12 @@ begin
     StringToFile(FilenameToUriSafe(CombinePaths(Directory, 'standalone.lpi')),
       '<CONFIG/>');
     AssertTrue(IsSeparateToolProjectDirectory(Directory));
-    DeleteFile(CombinePaths(Directory, 'standalone.lpi'));
+    SysUtils.DeleteFile(CombinePaths(Directory, 'standalone.lpi'));
 
     StringToFile(FilenameToUriSafe(CombinePaths(Directory, 'tool.dproj')),
       '<Project/>');
     AssertTrue(IsSeparateToolProjectDirectory(Directory));
-    DeleteFile(CombinePaths(Directory, 'tool.dproj'));
+    SysUtils.DeleteFile(CombinePaths(Directory, 'tool.dproj'));
 
     StringToFile(FilenameToUriSafe(CombinePaths(Directory, 'app.lpr')),
       'program App;');
@@ -143,7 +310,7 @@ begin
         DirectoryContainsPackageContent(Directory, false, false, false));
       AssertEquals(I = High(DataExtensions),
         DirectoryContainsPackageContent(Directory, false, false, true));
-      DeleteFile(FileName);
+      SysUtils.DeleteFile(FileName);
     end;
 
     CheckForceDirectories(CombinePaths(Directory, 'tests'));
@@ -361,7 +528,8 @@ var
   end;
 
 begin
-  BuildToolExecutable := GetEnvironmentVariable('CASTLE_ENGINE_TEST_EXECUTABLE');
+  BuildToolExecutable := SysUtils.GetEnvironmentVariable(
+    'CASTLE_ENGINE_TEST_EXECUTABLE');
   if BuildToolExecutable = '' then
     BuildToolExecutable := CastleEnginePath + 'tools' + PathDelim +
       'build-tool' + PathDelim + 'castle-engine' + ExeExtension;
