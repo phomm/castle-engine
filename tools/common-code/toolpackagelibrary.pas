@@ -57,7 +57,7 @@ type
 
 const
   { Default JSON source for the packages library. }
-  DefaultPackagesLibraryUrl = 'https://raw.githubusercontent.com/phomm/cge-packages/refs/heads/main/unified.json';
+  DefaultPackagesLibraryUrl = 'https://raw.githubusercontent.com/castle-engine/packages/refs/heads/main/packages.json';
 
   { Feature identifier for downloading package sources into packages/. }
   PackageFeatureCopyCode = 'copy-code';

@@ -135,7 +135,7 @@ uses CastleOpenDocument, CastleUtils, CastleLog, CastleSoundEngine,
   CastleStringUtils, CastleFilesUtils, CastleUriUtils,
   CastleInternalProcess,
   ToolCompilerInfo, ToolFpcVersion, ToolCommonUtils, ToolManifest,
-  ToolProcessRun,
+  ToolProcessRun, ToolPackageLibrary,
   EditorUtils, ProjectUtils;
 
 {$R *.lfm}

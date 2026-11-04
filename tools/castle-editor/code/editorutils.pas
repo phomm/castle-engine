@@ -173,7 +173,6 @@ procedure SetEnabledVisible(const Action: TAction; const Value: Boolean); overlo
 const
   FpcRtlApiReferenceUrl = 'https://www.freepascal.org/docs-html/rtl/';
   LclApiReferenceUrl = 'https://lazarus-ccr.sourceforge.io/docs/lcl/';
-  DefaultPackagesLibraryUrl = 'https://raw.githubusercontent.com/phomm/cge-packages/refs/heads/main/unified.json';
 
 function ApiReferenceUrl: String;
 
@@ -318,7 +317,7 @@ uses
   CastleUtils, CastleLog, CastleSoundEngine, CastleFilesUtils, CastleLclUtils,
   CastleComponentSerialize, CastleUiControls, CastleCameras, CastleTransform,
   CastleColors, CastleTimeUtils, CastleUriUtils,
-  ToolCompilerInfo, ToolCommonUtils, ToolProcessRun;
+  ToolCompilerInfo, ToolCommonUtils, ToolProcessRun, ToolPackageLibrary;
 
 function PackagesLibraryUrl: String;
 begin
