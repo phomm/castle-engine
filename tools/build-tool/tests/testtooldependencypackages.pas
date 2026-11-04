@@ -393,8 +393,7 @@ begin
     AssertPackages('', '');
 
     RunBuildTool(['install-package', FirstPackageId], 0, Output);
-    AssertTrue(Pos('Package feature is feature-one', Output) <> 0);
-    AssertTrue(Pos('Package feature is feature-two', Output) <> 0);
+    AssertTrue(Pos('Package features: feature-one, feature-two', Output) <> 0);
     AssertTrue(Pos('[DependencyPackages] Appended package node; writing manifest ',
       Output) <> 0);
     AssertTrue(Pos('[DependencyPackages] Manifest write completed: ',
@@ -412,8 +411,7 @@ begin
 
     ManifestBeforeUpdate := FileToString(FilenameToUriSafe(ManifestFileName));
     RunBuildTool(['update-package', FirstPackageId], 0, Output);
-    AssertTrue(Pos('Package feature is feature-one', Output) <> 0);
-    AssertTrue(Pos('Package feature is feature-two', Output) <> 0);
+    AssertTrue(Pos('Package features: feature-one, feature-two', Output) <> 0);
     AssertTrue(Pos('there is no package metadata to update', Output) <> 0);
     AssertEquals(ManifestBeforeUpdate,
       FileToString(FilenameToUriSafe(ManifestFileName)));

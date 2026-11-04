@@ -34,7 +34,7 @@ uses
   CastlePropEdits, CastleDialogs, X3DNodes, CastleFindFiles,
   DataModuleIcons, CastleClassUtils,
   EditorUtils, FrameDesign, FrameViewFile, FormNewUnit, ToolManifest,
-  ToolPackageFormat, ToolEditorUtils, FormImportPackage, ToolDependencyPackages;
+  ToolPackageFormat, ToolEditorUtils, FormImportPackage, ToolDependencyPackagesManifest;
 
 const
   DockLayoutFileName = 'layout.dock-layout';
@@ -3617,7 +3617,7 @@ begin
   if ImportPackageForm <> nil then
   begin
     try
-      ReadInstalledPackages(CombinePaths(ProjectPath, ManifestName),
+      ReadInstalledDependencyPackages(CombinePaths(ProjectPath, ManifestName),
         InstalledPackageIds, true);
       ImportPackageForm.UpdateInstalledPackageStatuses;
     except
