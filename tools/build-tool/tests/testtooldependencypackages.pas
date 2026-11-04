@@ -140,23 +140,25 @@ begin
       FileName := CombinePaths(Directory, 'asset' + DataExtensions[I]);
       StringToFile(FilenameToUriSafe(FileName), 'test');
       AssertEquals(I < High(DataExtensions),
-        DirectoryContainsPackageData(Directory, false, false));
+        DirectoryContainsPackageContent(Directory, false, false, false));
+      AssertEquals(I = High(DataExtensions),
+        DirectoryContainsPackageContent(Directory, false, false, true));
       DeleteFile(FileName);
     end;
 
     CheckForceDirectories(CombinePaths(Directory, 'tests'));
     StringToFile(FilenameToUriSafe(
       CombinePaths(Directory, 'tests' + PathDelim + 'hidden.png')), 'test');
-    AssertFalse(DirectoryContainsPackageData(Directory, true, false));
-    AssertTrue(DirectoryContainsPackageData(Directory, false, false));
+    AssertFalse(DirectoryContainsPackageContent(Directory, true, false, false));
+    AssertTrue(DirectoryContainsPackageContent(Directory, false, false, false));
 
     CheckForceDirectories(CombinePaths(Directory, 'tools'));
     StringToFile(FilenameToUriSafe(
       CombinePaths(Directory, 'tools' + PathDelim + 'hidden.png')), 'test');
     StringToFile(FilenameToUriSafe(
       CombinePaths(Directory, 'tools' + PathDelim + 'standalone.lpi')), '<CONFIG/>');
-    AssertFalse(DirectoryContainsPackageData(Directory, true, true));
-    AssertTrue(DirectoryContainsPackageData(Directory, false, false));
+    AssertFalse(DirectoryContainsPackageContent(Directory, true, true, false));
+    AssertTrue(DirectoryContainsPackageContent(Directory, false, false, false));
   finally
     RemoveNonEmptyDir(Directory);
   end;

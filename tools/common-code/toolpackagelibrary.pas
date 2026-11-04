@@ -75,6 +75,10 @@ const
 { Parse packages from a JSON library document. }
 function ParsePackageLibraryJson(const Content: String): TPackageInfoArray;
 
+{ Return whether a package supports the given feature. }
+function PackageHasFeature(const PackageInfo: TPackageInfo;
+  const Feature: String): Boolean;
+
 { Download the JSON packages library and parse it. }
 function LoadPackageLibrary(const Url: String): TPackageInfoArray;
 
@@ -87,6 +91,17 @@ implementation
 uses
   Classes, SysUtils, fpjson, jsonparser,
   CastleDownload, CastleLog;
+
+function PackageHasFeature(const PackageInfo: TPackageInfo;
+  const Feature: String): Boolean;
+var
+  I: Integer;
+begin
+  for I := 0 to High(PackageInfo.Features) do
+    if PackageInfo.Features[I] = Feature then
+      Exit(true);
+  Result := false;
+end;
 
 function PackageLibraryImageUrl(const LibraryUrl, ImagePath: String): String;
 var

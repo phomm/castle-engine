@@ -54,6 +54,7 @@ implementation
 
 uses SysUtils,
   CastleUriUtils, CastleXmlUtils, CastleFilesUtils,
+  CastleFindFiles,
   CastleDownload,
   CastleLog,
   ToolPackageLibrary, ToolGitDownload,
@@ -225,40 +226,35 @@ end;
 procedure AddPackageCodeSearchPathsInDirectory(const Document: TXMLDocument;
   const PackageId, PackageDirectory, RelativeDirectory: String);
 var
-  Search: TSearchRec;
-  SearchResult: Integer;
-  EntryName, SourcePath, ChildRelativeDirectory, Extension: String;
+  FileInfos: TFileInfoList;
+  FileInfo: TFileInfo;
+  I: Integer;
+  SourcePath, ChildRelativeDirectory, Extension: String;
   HasPascalFile: Boolean;
 begin
   HasPascalFile := false;
-  SearchResult := FindFirst(IncludeTrailingPathDelimiter(PackageDirectory) + '*',
-    faAnyFile, Search);
-  if SearchResult <> 0 then
-    Exit;
+  FileInfos := FindFilesList(PackageDirectory, '*', true, []);
   try
-    repeat
-      EntryName := Search.Name;
-      if (EntryName <> '.') and (EntryName <> '..') then
+    for I := 0 to FileInfos.Count - 1 do
+    begin
+      FileInfo := FileInfos[I];
+      SourcePath := CombinePaths(PackageDirectory, FileInfo.Name);
+      if FileInfo.Directory then
       begin
-        SourcePath := CombinePaths(PackageDirectory, EntryName);
-        if (Search.Attr and faDirectory) <> 0 then
-        begin
-          if RelativeDirectory = '' then
-            ChildRelativeDirectory := EntryName
-          else
-            ChildRelativeDirectory := CombinePaths(RelativeDirectory, EntryName);
-          AddPackageCodeSearchPathsInDirectory(Document, PackageId, SourcePath,
-            ChildRelativeDirectory);
-        end else
-        begin
-          Extension := LowerCase(ExtractFileExt(EntryName));
-          if (Extension = '.pas') or (Extension = '.pp') then
-            HasPascalFile := true;
-        end;
+        if RelativeDirectory = '' then
+          ChildRelativeDirectory := FileInfo.Name
+        else
+          ChildRelativeDirectory := CombinePaths(RelativeDirectory, FileInfo.Name);
+        AddPackageCodeSearchPathsInDirectory(Document, PackageId, SourcePath,
+          ChildRelativeDirectory);
+      end else
+      begin
+        Extension := LowerCase(ExtractFileExt(FileInfo.Name));
+        if (Extension = '.pas') or (Extension = '.pp') then
+          HasPascalFile := true;
       end;
-      SearchResult := FindNext(Search);
-    until SearchResult <> 0;
-  finally FindClose(Search) end;
+    end;
+  finally FreeAndNil(FileInfos) end;
 
   if HasPascalFile then
     AddPackageCodeSearchPath(Document, PackageId, RelativeDirectory);
@@ -318,78 +314,58 @@ end;
 procedure AddEditorUnit(const Document: TXMLDocument;
   const UnitName: String);
 var
-  CurrentUnits, UnitListEntry: String;
-  StartPosition, SeparatorPosition: Integer;
-  UnitFound: Boolean;
+  CurrentUnits: String;
+  ExistingUnits: TStringList;
 begin
   CurrentUnits := Document.DocumentElement.AttributeStringDef('editor_units', '');
-  StartPosition := 1;
-  UnitFound := false;
-  while StartPosition <= Length(CurrentUnits) do
-  begin
-    SeparatorPosition := Pos(',', Copy(CurrentUnits, StartPosition, MaxInt));
-    if SeparatorPosition = 0 then
+  ExistingUnits := TStringList.Create;
+  try
+    ExistingUnits.CaseSensitive := false;
+    ExistingUnits.CommaText := CurrentUnits;
+    if ExistingUnits.IndexOf(UnitName) = -1 then
     begin
-      UnitListEntry := Trim(Copy(CurrentUnits, StartPosition, MaxInt));
-      StartPosition := Length(CurrentUnits) + 1;
-    end else
-    begin
-      UnitListEntry := Trim(Copy(CurrentUnits, StartPosition,
-        SeparatorPosition - 1));
-      Inc(StartPosition, SeparatorPosition);
+      if CurrentUnits <> '' then
+        CurrentUnits := CurrentUnits + ',';
+      CurrentUnits := CurrentUnits + UnitName;
+      Document.DocumentElement.SetAttribute('editor_units',
+        UTF8Decode(CurrentUnits));
     end;
-    if SameText(UnitListEntry, UnitName) then
-      UnitFound := true;
-  end;
-
-  if not UnitFound then
-  begin
-    if CurrentUnits <> '' then
-      CurrentUnits := CurrentUnits + ',';
-    CurrentUnits := CurrentUnits + UnitName;
-    Document.DocumentElement.SetAttribute('editor_units',
-      UTF8Decode(CurrentUnits));
-  end;
+  finally FreeAndNil(ExistingUnits) end;
 end;
 
 procedure CollectPackageEditorUnits(const PackageDirectory: String;
   const UnitNames: TStrings);
 var
-  Search: TSearchRec;
-  SearchResult: Integer;
-  EntryName, FileName, Contents, Extension, UnitName: String;
+  FileInfos: TFileInfoList;
+  FileInfo: TFileInfo;
+  I: Integer;
+  FileName, Contents, Extension, UnitName: String;
 begin
-  SearchResult := FindFirst(IncludeTrailingPathDelimiter(PackageDirectory) + '*',
-    faAnyFile, Search);
-  if SearchResult <> 0 then
-    Exit;
+  FileInfos := FindFilesList(PackageDirectory, '*', true, []);
   try
-    repeat
-      EntryName := Search.Name;
-      if (EntryName <> '.') and (EntryName <> '..') then
+    for I := 0 to FileInfos.Count - 1 do
+    begin
+      FileInfo := FileInfos[I];
+      FileName := CombinePaths(PackageDirectory, FileInfo.Name);
+      if FileInfo.Directory then
+        CollectPackageEditorUnits(FileName, UnitNames)
+      else
       begin
-        FileName := CombinePaths(PackageDirectory, EntryName);
-        if (Search.Attr and faDirectory) <> 0 then
-          CollectPackageEditorUnits(FileName, UnitNames)
-        else
+        Extension := LowerCase(ExtractFileExt(FileInfo.Name));
+        if (Extension = '.pas') or (Extension = '.pp') then
         begin
-          Extension := LowerCase(ExtractFileExt(EntryName));
-          if (Extension = '.pas') or (Extension = '.pp') then
+          Contents := FileToString(FilenameToUriSafe(FileName));
+          if Pos('registerserializablecomponent',
+            LowerCase(Contents)) <> 0 then
           begin
-            Contents := FileToString(FilenameToUriSafe(FileName));
-            if Pos('registerserializablecomponent',
-              LowerCase(Contents)) <> 0 then
-            begin
-              UnitName := PascalUnitName(FileName, Contents);
-              if UnitNames.IndexOf(UnitName) = -1 then
-                UnitNames.Add(UnitName);
-            end;
+            UnitName := PascalUnitName(FileName, Contents);
+            if UnitNames.IndexOf(UnitName) = -1 then
+              UnitNames.Add(UnitName);
           end;
         end;
       end;
-      SearchResult := FindNext(Search);
-    until SearchResult <> 0;
-  finally FindClose(Search) end;
+    end;
+  finally FreeAndNil(FileInfos) end;
 end;
 
 procedure AddPackageEditorUnits(const Document: TXMLDocument;
@@ -414,47 +390,29 @@ end;
 procedure RemovePackageEditorUnits(const Document: TXMLDocument;
   const UnitNames: TStrings);
 var
-  CurrentUnits, UnitListEntry, RemainingUnits: String;
-  StartPosition, SeparatorPosition, I: Integer;
-  RemoveUnit: Boolean;
+  CurrentUnits, RemainingUnits: String;
+  EditorUnits: TStringList;
+  I: Integer;
 begin
   if UnitNames.Count = 0 then
     Exit;
   CurrentUnits := Document.DocumentElement.AttributeStringDef('editor_units', '');
-  StartPosition := 1;
-  RemainingUnits := '';
-  while StartPosition <= Length(CurrentUnits) do
-  begin
-    SeparatorPosition := Pos(',', Copy(CurrentUnits, StartPosition, MaxInt));
-    if SeparatorPosition = 0 then
-    begin
-      UnitListEntry := Trim(Copy(CurrentUnits, StartPosition, MaxInt));
-      StartPosition := Length(CurrentUnits) + 1;
-    end else
-    begin
-      UnitListEntry := Trim(Copy(CurrentUnits, StartPosition,
-        SeparatorPosition - 1));
-      Inc(StartPosition, SeparatorPosition);
-    end;
-
-    RemoveUnit := false;
-    for I := 0 to UnitNames.Count - 1 do
-      if SameText(UnitListEntry, UnitNames[I]) then
+  EditorUnits := TStringList.Create;
+  try
+    EditorUnits.CommaText := CurrentUnits;
+    RemainingUnits := '';
+    for I := 0 to EditorUnits.Count - 1 do
+      if (EditorUnits[I] <> '') and (UnitNames.IndexOf(EditorUnits[I]) = -1) then
       begin
-        RemoveUnit := true;
-        Break;
+        if RemainingUnits <> '' then
+          RemainingUnits += ',';
+        RemainingUnits += EditorUnits[I];
       end;
-    if not RemoveUnit and (UnitListEntry <> '') then
-    begin
-      if RemainingUnits <> '' then
-        RemainingUnits += ',';
-      RemainingUnits += UnitListEntry;
-    end;
-  end;
 
-  if RemainingUnits <> CurrentUnits then
-    Document.DocumentElement.SetAttribute('editor_units',
-      UTF8Decode(RemainingUnits));
+    if RemainingUnits <> CurrentUnits then
+      Document.DocumentElement.SetAttribute('editor_units',
+        UTF8Decode(RemainingUnits));
+  finally FreeAndNil(EditorUnits) end;
 end;
 
 procedure RemovePackageCodeSearchPaths(const Document: TXMLDocument;
@@ -515,22 +473,8 @@ begin
 end;
 
 procedure WritePackageFeatures(const PackageInfo: TPackageInfo);
-var
-  I: Integer;
 begin
-  for I := 0 to High(PackageInfo.Features) do
-    DependencyPackagesWrite('Package feature is ' + PackageInfo.Features[I]);
-end;
-
-function PackageHasFeature(const PackageInfo: TPackageInfo;
-  const Feature: String): Boolean;
-var
-  I: Integer;
-begin
-  for I := 0 to High(PackageInfo.Features) do
-    if PackageInfo.Features[I] = Feature then
-      Exit(true);
-  Result := false;
+  DependencyPackagesWrite('Package features: ' + String.Join(', ', PackageInfo.Features));
 end;
 
 procedure ReadInstalledPackages(const ManifestFileName: String;
@@ -564,9 +508,9 @@ var
   Document: TXMLDocument;
   PackagesElement, PackageElement: TDOMElement;
   PackageIds: TStringList;
-  CheckedId: String;
+  CheckedId, ProjectDirectory, PackageDirectory: String;
   PackageInfo: TPackageInfo;
-  AlreadyInstalled: Boolean;
+  AlreadyInstalled, CopyCode, CopyData, RegisterEditor: Boolean;
 begin
   DependencyPackagesWrite(Format('Install command: manifest="%s", package="%s"',
     [ManifestFileName, PackageId]));
@@ -577,6 +521,12 @@ begin
     'Preparing to install package "%s" from %s', [CheckedId, PackageInfo.RepoUrl]));
   DependencyPackagesWrite('Package repository URL is ' + PackageInfo.RepoUrl);
   WritePackageFeatures(PackageInfo);
+  CopyCode := PackageHasFeature(PackageInfo, PackageFeatureCopyCode);
+  CopyData := PackageHasFeature(PackageInfo, PackageFeatureCopyData);
+  RegisterEditor := PackageHasFeature(PackageInfo, PackageFeatureRegisterEditor);
+  ProjectDirectory := ExtractFileDir(ExpandFileName(ManifestFileName));
+  PackageDirectory := CombinePaths(ProjectDirectory,
+    CombinePaths('packages', CheckedPackageDirectoryName(CheckedId)));
   PackageIds := TStringList.Create;
   PackageIds.CaseSensitive := true;
   try
@@ -590,25 +540,19 @@ begin
           [CheckedId]));
       end;
 
-      if PackageHasFeature(PackageInfo, PackageFeatureCopyCode) or
-        PackageHasFeature(PackageInfo, PackageFeatureCopyData) then
+      if CopyCode or CopyData then
       begin
         DependencyPackagesWrite(Format('Downloading package "%s"',
           [CheckedId]));
         PackageInfo.Id := CheckedPackageDirectoryName(CheckedId);
-        DownloadPackage(PackageInfo,
-          ExtractFileDir(ExpandFileName(ManifestFileName)));
+        DownloadPackage(PackageInfo, ProjectDirectory);
       end;
 
-      if PackageHasFeature(PackageInfo, PackageFeatureCopyCode) then
-        AddPackageCodeSearchPaths(Document, CheckedId, CombinePaths(
-          ExtractFileDir(ExpandFileName(ManifestFileName)),
-          CombinePaths('packages', CheckedPackageDirectoryName(CheckedId))));
+      if CopyCode then
+        AddPackageCodeSearchPaths(Document, CheckedId, PackageDirectory);
 
-      if PackageHasFeature(PackageInfo, PackageFeatureRegisterEditor) then
-        AddPackageEditorUnits(Document, CombinePaths(
-          ExtractFileDir(ExpandFileName(ManifestFileName)),
-          CombinePaths('packages', CheckedPackageDirectoryName(CheckedId))));
+      if RegisterEditor then
+        AddPackageEditorUnits(Document, PackageDirectory);
 
       if PackagesElement = nil then
       begin

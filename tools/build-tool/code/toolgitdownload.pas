@@ -52,10 +52,11 @@ function CanOperateGitProject(const ProjectDirectory: String): Boolean;
   tool project. }
 function IsSeparateToolProjectDirectory(const Directory: String): Boolean;
 
-{ Return whether a directory contains image, audio, shader, model, or
-  Castle-format data files after applying the package folder filters. }
-function DirectoryContainsPackageData(const Directory: String;
-  const SkipTest, SkipTool: Boolean): Boolean;
+{ Return whether a directory contains package content after applying the
+  package folder filters. CopyCode determines whether Pascal source or data
+  files are counted. }
+function DirectoryContainsPackageContent(const Directory: String;
+  const SkipTest, SkipTool, CopyCode: Boolean): Boolean;
 
 { Download the sources/data described by PackageInfo into ProjectDirectory.
   Code goes into packages/<id>, data into data/<id>. }
@@ -64,9 +65,9 @@ procedure DownloadPackage(const PackageInfo: TPackageInfo;
 
 implementation
 
-uses Classes, SysUtils,
+uses Classes, SysUtils, StrUtils,
   CastleDownload, CastleFilesUtils, CastleInternalProcess, CastleLog,
-  CastleStringUtils;
+  CastleStringUtils, CastleFindFiles, ToolPackageConstants;
 
 function IsGitInstalled: Boolean;
 begin
@@ -106,7 +107,7 @@ begin
     raise Exception.CreateFmt('Git repository URL "%s" must use HTTP or HTTPS',
       [Url]);
   Scheme := LowerCase(Copy(CleanUrl, 1, PathStart - 1));
-  if (Scheme <> 'http') and (Scheme <> 'https') then
+  if not MatchText(Scheme, GitRepositoryUrlSchemes) then
     raise Exception.CreateFmt('Unsupported Git repository URL scheme "%s"',
       [Scheme]);
 
@@ -127,12 +128,6 @@ begin
   if Pos('@', Authority) <> 0 then
     raise Exception.CreateFmt('Invalid Git repository URL "%s"', [Url]);
 
-  PathStart := Pos('?', PathPart);
-  if PathStart <> 0 then
-    Delete(PathPart, PathStart, MaxInt);
-  PathStart := Pos('#', PathPart);
-  if PathStart <> 0 then
-    Delete(PathPart, PathStart, MaxInt);
   while (PathPart <> '') and (PathPart[Length(PathPart)] = '/') do
     Delete(PathPart, Length(PathPart), 1);
 
@@ -153,14 +148,17 @@ begin
         [Url]);
 
     for I := 0 to PathSegments.Count - 1 do
-      if (PathSegments[I] = '.') or (PathSegments[I] = '..') then
+      if MatchText(PathSegments[I], GitInvalidPathSegments) then
         raise Exception.CreateFmt('Invalid path in Git repository URL "%s"',
           [Url]);
 
     RepositoryPath := PathSegments[0] + '/' + PathSegments[1];
-    if (Length(RepositoryPath) >= 4) and
-      (Copy(RepositoryPath, Length(RepositoryPath) - 3, 4) = '.git') then
-      Delete(RepositoryPath, Length(RepositoryPath) - 3, 4);
+    if (Length(RepositoryPath) >= Length(GitRepositorySuffix)) and
+      (Copy(RepositoryPath,
+        Length(RepositoryPath) - Length(GitRepositorySuffix) + 1,
+        Length(GitRepositorySuffix)) = GitRepositorySuffix) then
+      Delete(RepositoryPath, Length(RepositoryPath) - Length(GitRepositorySuffix) + 1,
+        Length(GitRepositorySuffix));
     Result.RepositoryUrl := Scheme + '://' + Authority + '/' + RepositoryPath;
 
     Result.Branch := '';
@@ -171,12 +169,10 @@ begin
     if FirstPathSegment < PathSegments.Count then
     begin
       IsGitHubOrGitLabPath :=
-        (PathSegments[FirstPathSegment] = 'blob') or
-        (PathSegments[FirstPathSegment] = 'tree');
-      if (PathSegments[FirstPathSegment] = '-') and
+        MatchText(PathSegments[FirstPathSegment], GitRepositoryViewSegments);
+      if (PathSegments[FirstPathSegment] = GitRepositoryViewPrefixSegment) and
         (FirstPathSegment + 1 < PathSegments.Count) and
-        ((PathSegments[FirstPathSegment + 1] = 'blob') or
-         (PathSegments[FirstPathSegment + 1] = 'tree')) then
+        MatchText(PathSegments[FirstPathSegment + 1], GitRepositoryViewSegments) then
       begin
         Inc(FirstPathSegment);
         IsGitHubOrGitLabPath := true;
@@ -185,11 +181,10 @@ begin
       if IsGitHubOrGitLabPath then
       begin
         ViewKind := PathSegments[FirstPathSegment];
-        Result.IsSingleFile := ViewKind = 'blob';
+        Result.IsSingleFile := ViewKind = GitSingleFileViewSegment;
         Result.RawFileUrl := '';
-        if (LowerCase(Authority) = 'github.com') and Result.IsSingleFile then
-          Result.RawFileUrl := 'https://raw.githubusercontent.com/' +
-            RepositoryPath + '/';
+        if (LowerCase(Authority) = GitHubHostName) and Result.IsSingleFile then
+          Result.RawFileUrl := GitHubRawFileUrlPrefix + RepositoryPath + '/';
         Inc(FirstPathSegment);
         if FirstPathSegment >= PathSegments.Count then
           raise Exception.CreateFmt(
@@ -207,9 +202,8 @@ begin
           Result.Path += '/' + PathSegments[I];
         if Result.RawFileUrl <> '' then
           Result.RawFileUrl += Result.Path;
-        if (Result.Path = '.') or (Result.Path = '..') or
-          (Pos('../', Result.Path) = 1) or
-          (Pos('/..', Result.Path) <> 0) then
+        if MatchText(Result.Path, GitInvalidPathSegments) or
+          ToolContainsAnySubstring(Result.Path, GitInvalidPathSubstrings) then
           raise Exception.CreateFmt('Invalid path in Git URL "%s"', [Url]);
       end;
       if Result.IsSingleFile and (Result.Path = '') then
@@ -218,92 +212,40 @@ begin
   finally FreeAndNil(PathSegments) end;
 end;
 
-function PackageHasFeature(const PackageInfo: TPackageInfo;
-  const Feature: String): Boolean;
-var
-  I: Integer;
-begin
-  for I := 0 to High(PackageInfo.Features) do
-    if PackageInfo.Features[I] = Feature then
-      Exit(true);
-  Result := false;
-end;
-
 function IsTestDirectory(const Name: String): Boolean;
-var
-  LowerName: String;
 begin
-  LowerName := LowerCase(Name);
-  Result :=
-    (Copy(LowerName, 1, 4) = 'test') or
-    (Copy(LowerName, 1, 4) = 'demo') or
-    (Copy(LowerName, 1, 7) = 'example') or
-    (Copy(LowerName, 1, 6) = 'sample');
+  Result := ToolStartsWithAnyText(Name, TestDirectoryPrefixes);
 end;
 
 function IsSeparateToolProjectDirectory(const Directory: String): Boolean;
 var
-  Search: TSearchRec;
-  SearchResult: Integer;
+  FileInfos: TFileInfoList;
+  FileInfo: TFileInfo;
+  I: Integer;
   Extension: String;
 begin
   Result := false;
-  SearchResult := FindFirst(IncludeTrailingPathDelimiter(Directory) + '*',
-    faAnyFile, Search);
-  if SearchResult <> 0 then
-    Exit;
+  FileInfos := FindFilesList(Directory, '*', false, []);
   try
-    repeat
-      if ((Search.Attr and faDirectory) = 0) then
+    for I := 0 to FileInfos.Count - 1 do
+    begin
+      FileInfo := FileInfos[I];
+      if not FileInfo.Directory then
       begin
-        Extension := LowerCase(ExtractFileExt(Search.Name));
-        if (Extension = '.lpi') or
-          (Extension = '.dpr') or
-          (Extension = '.lpr') or
-          (Extension = '.dproj') or
-          (Extension = '.cbproj') or
-          (Extension = '.groupproj') then
+        Extension := LowerCase(ExtractFileExt(FileInfo.Name));
+        if MatchText(Extension, SeparateToolProjectExtensions) then
           Exit(true);
       end;
-      SearchResult := FindNext(Search);
-    until SearchResult <> 0;
-  finally FindClose(Search) end;
+    end;
+  finally FreeAndNil(FileInfos) end;
 end;
 
-function DirectoryContainsPascalFiles(const Directory: String;
-  const SkipTest, SkipTool: Boolean): Boolean;
+function IsPascalSourceFile(const FileName: String): Boolean;
 var
-  Search: TSearchRec;
-  SearchResult: Integer;
-  EntryName, EntryPath, Extension: String;
+  Extension: String;
 begin
-  Result := false;
-  SearchResult := FindFirst(IncludeTrailingPathDelimiter(Directory) + '*',
-    faAnyFile, Search);
-  if SearchResult <> 0 then
-    Exit;
-  try
-    repeat
-      EntryName := Search.Name;
-      if (EntryName <> '.') and (EntryName <> '..') then
-      begin
-        EntryPath := CombinePaths(Directory, EntryName);
-        if (Search.Attr and faDirectory) <> 0 then
-        begin
-          if (not SkipTest or not IsTestDirectory(EntryName)) and
-            (not SkipTool or not IsSeparateToolProjectDirectory(EntryPath)) and
-            DirectoryContainsPascalFiles(EntryPath, SkipTest, SkipTool) then
-            Exit(true);
-        end else
-        begin
-          Extension := LowerCase(ExtractFileExt(EntryName));
-          if (Extension = '.pas') or (Extension = '.pp') then
-            Exit(true);
-        end;
-      end;
-      SearchResult := FindNext(Search);
-    until SearchResult <> 0;
-  finally FindClose(Search) end;
+  Extension := LowerCase(ExtractFileExt(FileName));
+  Result := MatchText(Extension, PascalSourceExtensions);
 end;
 
 function IsPackageDataFile(const FileName: String): Boolean;
@@ -311,102 +253,70 @@ var
   Extension: String;
 begin
   Extension := LowerCase(ExtractFileExt(FileName));
-  Result :=
-    (Extension = '.png') or (Extension = '.jpg') or
-    (Extension = '.jpeg') or (Extension = '.gif') or
-    (Extension = '.bmp') or (Extension = '.webp') or
-    (Extension = '.tga') or (Extension = '.dds') or
-    (Extension = '.ktx') or (Extension = '.ktx2') or
-    (Extension = '.hdr') or (Extension = '.exr') or
-    (Extension = '.svg') or (Extension = '.ico') or
-    (Extension = '.wav') or (Extension = '.ogg') or
-    (Extension = '.mp3') or (Extension = '.flac') or
-    (Extension = '.opus') or (Extension = '.m4a') or
-    (Extension = '.aac') or (Extension = '.mid') or
-    (Extension = '.midi') or (Extension = '.glsl') or
-    (Extension = '.vert') or (Extension = '.frag') or
-    (Extension = '.geom') or (Extension = '.tesc') or
-    (Extension = '.tese') or (Extension = '.comp') or
-    (Extension = '.vs') or (Extension = '.fs') or
-    (Extension = '.x3d') or (Extension = '.x3dv') or
-    (Extension = '.x3dz') or (Extension = '.x3dvz') or
-    (Extension = '.gltf') or (Extension = '.glb') or
-    (Extension = '.obj') or (Extension = '.dae') or
-    (Extension = '.3ds') or (Extension = '.stl') or
-    (Extension = '.ply') or (Extension = '.fbx') or
-    (Extension = '.blend') or (Extension = '.md2') or
-    (Extension = '.md3') or (Extension = '.ifc') or
-    (Copy(Extension, 1, 8) = '.castle-');
+  Result := MatchText(Extension, PackageDataExtensions) or
+    ToolStartsWithAnyText(Extension, [CastleDataFileExtensionPrefix]);
 end;
 
-function DirectoryContainsPackageData(const Directory: String;
-  const SkipTest, SkipTool: Boolean): Boolean;
+function DirectoryContainsPackageContent(const Directory: String;
+  const SkipTest, SkipTool, CopyCode: Boolean): Boolean;
 var
-  Search: TSearchRec;
-  SearchResult: Integer;
-  EntryName, EntryPath: String;
+  FileInfos: TFileInfoList;
+  FileInfo: TFileInfo;
+  I: Integer;
+  EntryPath: String;
 begin
   Result := false;
-  SearchResult := FindFirst(IncludeTrailingPathDelimiter(Directory) + '*',
-    faAnyFile, Search);
-  if SearchResult <> 0 then
-    Exit;
+  FileInfos := FindFilesList(Directory, '*', true, []);
   try
-    repeat
-      EntryName := Search.Name;
-      if (EntryName <> '.') and (EntryName <> '..') then
+    for I := 0 to FileInfos.Count - 1 do
+    begin
+      FileInfo := FileInfos[I];
+      EntryPath := CombinePaths(Directory, FileInfo.Name);
+      if FileInfo.Directory then
       begin
-        EntryPath := CombinePaths(Directory, EntryName);
-        if (Search.Attr and faDirectory) <> 0 then
-        begin
-          if (not SkipTest or not IsTestDirectory(EntryName)) and
-            (not SkipTool or not IsSeparateToolProjectDirectory(EntryPath)) and
-            DirectoryContainsPackageData(EntryPath, SkipTest, SkipTool) then
-            Exit(true);
-        end else
-        if IsPackageDataFile(EntryName) then
+        if (not SkipTest or not IsTestDirectory(FileInfo.Name)) and
+          (not SkipTool or not IsSeparateToolProjectDirectory(EntryPath)) and
+          DirectoryContainsPackageContent(EntryPath, SkipTest, SkipTool, CopyCode) then
           Exit(true);
-      end;
-      SearchResult := FindNext(Search);
-    until SearchResult <> 0;
-  finally FindClose(Search) end;
+      end else
+      if (CopyCode and IsPascalSourceFile(FileInfo.Name)) or
+        (not CopyCode and IsPackageDataFile(FileInfo.Name)) then
+        Exit(true);
+    end;
+  finally FreeAndNil(FileInfos) end;
 end;
 
 procedure CopyPackageDirectory(const SourceDirectory, DestinationDirectory: String;
   const SkipTest, SkipTool, CopyCode: Boolean);
 var
-  Search: TSearchRec;
-  SearchResult: Integer;
-  EntryName, SourcePath, DestinationPath: String;
+  FileInfos: TFileInfoList;
+  FileInfo: TFileInfo;
+  I: Integer;
+  SourcePath, DestinationPath: String;
 begin
   CheckForceDirectories(DestinationDirectory);
-  SearchResult := FindFirst(IncludeTrailingPathDelimiter(SourceDirectory) + '*',
-    faAnyFile, Search);
-  if SearchResult <> 0 then
-    Exit;
+  FileInfos := FindFilesList(SourceDirectory, '*', true, []);
   try
-    repeat
-      EntryName := Search.Name;
-      if (EntryName <> '.') and (EntryName <> '..') and (EntryName <> '.git') then
+    for I := 0 to FileInfos.Count - 1 do
+    begin
+      FileInfo := FileInfos[I];
+      if not MatchText(FileInfo.Name, PackageIgnoredDirectoryNames) then
       begin
-        SourcePath := CombinePaths(SourceDirectory, EntryName);
-        DestinationPath := CombinePaths(DestinationDirectory, EntryName);
-        if (Search.Attr and faDirectory) <> 0 then
+        SourcePath := CombinePaths(SourceDirectory, FileInfo.Name);
+        DestinationPath := CombinePaths(DestinationDirectory, FileInfo.Name);
+        if FileInfo.Directory then
         begin
-          if (not SkipTest or not IsTestDirectory(EntryName)) and
+          if (not SkipTest or not IsTestDirectory(FileInfo.Name)) and
             (not SkipTool or not IsSeparateToolProjectDirectory(SourcePath)) and
-            ( (CopyCode and DirectoryContainsPascalFiles(SourcePath,
-                SkipTest, SkipTool)) or
-              (not CopyCode and DirectoryContainsPackageData(SourcePath,
-                SkipTest, SkipTool)) ) then
+            DirectoryContainsPackageContent(SourcePath, SkipTest, SkipTool,
+              CopyCode) then
             CopyPackageDirectory(SourcePath, DestinationPath,
               SkipTest, SkipTool, CopyCode);
         end else
           CheckCopyFile(SourcePath, DestinationPath);
       end;
-      SearchResult := FindNext(Search);
-    until SearchResult <> 0;
-  finally FindClose(Search) end;
+    end;
+  finally FreeAndNil(FileInfos) end;
 end;
 
 procedure DownloadSingleFile(const Url, DestinationDirectory, FileName: String);
@@ -451,27 +361,23 @@ end;
 
 procedure ClearReadOnlyAttributes(const Directory: String);
 var
-  Search: TSearchRec;
-  SearchResult: Integer;
-  EntryName, EntryPath: String;
+  FileInfos: TFileInfoList;
+  FileInfo: TFileInfo;
+  I: Integer;
+  EntryPath: String;
 begin
-  SearchResult := FindFirst(IncludeTrailingPathDelimiter(Directory) + '*',
-    faAnyFile, Search);
-  if SearchResult = 0 then
+  FileInfos := FindFilesList(Directory, '*', true, []);
   try
-    repeat
-      EntryName := Search.Name;
-      if (EntryName <> '.') and (EntryName <> '..') then
-      begin
-        EntryPath := CombinePaths(Directory, EntryName);
-        if (Search.Attr and faDirectory) <> 0 then
-          ClearReadOnlyAttributes(EntryPath)
-        else
-          FileSetAttr(EntryPath, FileGetAttr(EntryPath) and not faReadOnly);
-      end;
-      SearchResult := FindNext(Search);
-    until SearchResult <> 0;
-  finally FindClose(Search) end;
+    for I := 0 to FileInfos.Count - 1 do
+    begin
+      FileInfo := FileInfos[I];
+      EntryPath := CombinePaths(Directory, FileInfo.Name);
+      if FileInfo.Directory then
+        ClearReadOnlyAttributes(EntryPath)
+      else
+        FileSetAttr(EntryPath, FileGetAttr(EntryPath) and not faReadOnly);
+    end;
+  finally FreeAndNil(FileInfos) end;
 
   FileSetAttr(Directory, FileGetAttr(Directory) and not faReadOnly);
 end;
@@ -481,7 +387,7 @@ procedure DownloadPackage(const PackageInfo: TPackageInfo;
 var
   Reference: TGitRepositoryReference;
   PackageDirectory, CodeDestination, DataDestination: String;
-  DestinationParent, StagingDirectory, PackageSourceDirectory: String;
+  StagingDirectory, PackageSourceDirectory: String;
   Output, CheckedOutPath, FileName: String;
   StagingGuid: TGUID;
   Arguments: TCastleStringList;
@@ -516,12 +422,10 @@ begin
       'Package "%s" uses copy-code or copy-data, which is not supported for now because Git is not installed',
       [PackageInfo.Id]);
 
-  DestinationParent := ProjectDirectory;
-  CheckForceDirectories(DestinationParent);
   if CreateGUID(StagingGuid) <> 0 then
     raise Exception.Create('Cannot create a unique temporary Git clone path');
-  StagingDirectory := CombinePaths(DestinationParent,
-    'package-' + GUIDToString(StagingGuid));
+  StagingDirectory := CombinePaths(GetTempDir(false),
+    'castle-package-' + GUIDToString(StagingGuid));
   if DirectoryExists(StagingDirectory) or FileExists(StagingDirectory) then
     raise Exception.CreateFmt('Temporary Git clone path "%s" already exists',
       [StagingDirectory]);
@@ -611,7 +515,7 @@ begin
     if DirectoryExists(StagingDirectory) then
     begin
       ClearReadOnlyAttributes(StagingDirectory);
-      RemoveNonEmptyDir(StagingDirectory);
+      RemoveNonEmptyDir(StagingDirectory, true);
     end;
   end;
 end;

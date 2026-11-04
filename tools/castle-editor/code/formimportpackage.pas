@@ -58,6 +58,9 @@ type
 
   { Component panel template class. }
   TPackagePanel = class(TPanel)
+  private
+    procedure ExecutePackageCommand(const Command, ActionName: String);
+  public
     Image: TImage;
     LabelName: TLabel;
     LabelAuthor: TLabel;
@@ -104,6 +107,7 @@ type
     procedure CancelImageDownloads;
     procedure ImageDownloadUpdateTimerTimer(Sender: TObject);
     procedure StartImageDownload(const ImageControl: TImage; const Url: String);
+    procedure ShowImageUnavailable(const ImageControl: TImage);
     procedure ImageDownloadFinished(const Sender: TCastleDownload;
       var FreeSender: Boolean);
   public
@@ -330,34 +334,30 @@ end;
 
 { TPackagePanel ----------------------------------------------------------- }
 
-procedure TPackagePanel.ButtonAddClick(Sender: TObject);
+procedure TPackagePanel.ExecutePackageCommand(const Command, ActionName: String);
 begin
-  WritelnLog('ImportPackage', 'Add button clicked for package ID ' + Id +
+  WritelnLog('ImportPackage', ActionName + ' button clicked for package ID ' + Id +
     ': ' + LabelName.Caption);
   if Assigned(OnPackageCommand) then
-    OnPackageCommand(Self, 'install-package', Id)
+    OnPackageCommand(Self, Command, Id)
   else
-    WritelnWarning('ImportPackage', 'Cannot install package: no command handler assigned');
+    WritelnWarning('ImportPackage', 'Cannot ' + LowerCase(ActionName) +
+      ' package: no command handler assigned');
+end;
+
+procedure TPackagePanel.ButtonAddClick(Sender: TObject);
+begin
+  ExecutePackageCommand('install-package', 'Add');
 end;
 
 procedure TPackagePanel.ButtonUpdateClick(Sender: TObject);
 begin
-  WritelnLog('ImportPackage', 'Update button clicked for package ID ' + Id +
-    ': ' + LabelName.Caption);
-  if Assigned(OnPackageCommand) then
-    OnPackageCommand(Self, 'update-package', Id)
-  else
-    WritelnWarning('ImportPackage', 'Cannot update package: no command handler assigned');
+  ExecutePackageCommand('update-package', 'Update');
 end;
 
 procedure TPackagePanel.ButtonRemoveClick(Sender: TObject);
 begin
-  WritelnLog('ImportPackage', 'Remove button clicked for package ID ' + Id +
-    ': ' + LabelName.Caption);
-  if Assigned(OnPackageCommand) then
-    OnPackageCommand(Self, 'remove-package', Id)
-  else
-    WritelnWarning('ImportPackage', 'Cannot remove package: no command handler assigned');
+  ExecutePackageCommand('remove-package', 'Remove');
 end;
 
 procedure TPackagePanel.LabelRepoClick(Sender: TObject);
@@ -465,12 +465,17 @@ begin
       ImageDownload.Free;
       WritelnWarning('ImportPackage', 'Failed to start package image download from ' +
         Url + ': ' + E.Message);
-      ImageControl.Canvas.Brush.Color := clGray;
-      ImageControl.Canvas.FillRect(0, 0, ImageControl.Width, ImageControl.Height);
-      ImageControl.Canvas.Font.Color := clWhite;
-      ImageControl.Canvas.TextOut(10, (ImageControl.Height div 2) - 5, 'No Image');
+      ShowImageUnavailable(ImageControl);
     end;
   end;
+end;
+
+procedure TImportPackageForm.ShowImageUnavailable(const ImageControl: TImage);
+begin
+  ImageControl.Canvas.Brush.Color := clGray;
+  ImageControl.Canvas.FillRect(0, 0, ImageControl.Width, ImageControl.Height);
+  ImageControl.Canvas.Font.Color := clWhite;
+  ImageControl.Canvas.TextOut(10, (ImageControl.Height div 2) - 5, 'No Image');
 end;
 
 procedure TImportPackageForm.ImageDownloadFinished(
@@ -577,10 +582,7 @@ begin
     begin
       WritelnWarning('ImportPackage', 'Failed to load package image from ' +
         Sender.Url + ': ' + E.Message);
-      ImageControl.Canvas.Brush.Color := clGray;
-      ImageControl.Canvas.FillRect(0, 0, ImageControl.Width, ImageControl.Height);
-      ImageControl.Canvas.Font.Color := clWhite;
-      ImageControl.Canvas.TextOut(10, (ImageControl.Height div 2) - 5, 'No Image');
+      ShowImageUnavailable(ImageControl);
     end;
   end;
   FreeSender := true;

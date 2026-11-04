@@ -33,7 +33,7 @@ uses SysUtils,
   ToolNintendoSwitch, ToolCommonUtils, ToolUtils,
   { For ForcePipesPassthrough, necessary for Windows. } ToolProcessRun,
   ToolCache, ToolCompilerInfo, ToolMacOS, ToolDependencyPackages, 
-  opensslsockets;
+  CastleHttps;
 
 var
   Target: TTarget;
