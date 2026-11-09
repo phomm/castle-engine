@@ -43,7 +43,7 @@ uses
   CastleXmlUtils,
   CastleUtils,
   CastleUriUtils, ToolCommonUtils, ToolDependencyPackages, ToolGitDownload,
-  ToolPackageLibrary,
+  ToolPackageConstants, ToolPackageLibrary,
   {$ifdef MSWINDOWS} Windows {$else} BaseUnix {$endif};
 
 const
@@ -224,9 +224,9 @@ begin
       DownloadPackage(PackageInfo, ProjectDirectory);
 
       CodeDirectory := CombinePaths(ProjectDirectory,
-        'packages' + PathDelim + PackageInfo.Id);
+        CombinePaths(PackageCodeDirectoryName, PackageInfo.Id));
       DataDirectory := CombinePaths(ProjectDirectory,
-        'data' + PathDelim + PackageInfo.Id);
+        CombinePaths(PackageDataDirectoryName, PackageInfo.Id));
       AssertTrue(FileExists(CombinePaths(CodeDirectory,
         'src' + PathDelim + 'component.pas')));
       AssertTrue(FileExists(CombinePaths(CodeDirectory,
@@ -360,8 +360,10 @@ begin
       while Children.GetNext do
         Paths.Add(Children.Current.AttributeString('value'));
       AssertEquals(2, Paths.Count);
-      AssertTrue(Paths.IndexOf('packages/test-package/castle-bars/') <> -1);
-      AssertTrue(Paths.IndexOf('packages/test-package/') <> -1);
+      AssertTrue(Paths.IndexOf(PackageCodeDirectoryName +
+        '/test-package/castle-bars/') <> -1);
+      AssertTrue(Paths.IndexOf(PackageCodeDirectoryName +
+        '/test-package/') <> -1);
     finally
       FreeAndNil(Paths);
       FreeAndNil(Children);
@@ -427,14 +429,14 @@ begin
         '<package>' + SecondPackageId + '</package>' +
       '</dependency_packages>' +
       '<compiler_options><search_paths>' +
-        '<path value="packages/' + FirstPackageId + '/"/>' +
-        '<path value="packages/' + FirstPackageId + '/source-files/"/>' +
-        '<path value="packages/' + SecondPackageId + '/"/>' +
+        '<path value="' + PackageCodeDirectoryName + '/' + FirstPackageId + '/"/>' +
+        '<path value="' + PackageCodeDirectoryName + '/' + FirstPackageId + '/source-files/"/>' +
+        '<path value="' + PackageCodeDirectoryName + '/' + SecondPackageId + '/"/>' +
         '<path value="other/"/>' +
       '</search_paths></compiler_options></project>' + LineEnding);
 
     CodeDirectory := CombinePaths(ProjectDirectory,
-      CombinePaths('packages', FirstPackageId));
+      CombinePaths(PackageCodeDirectoryName, FirstPackageId));
     CheckForceDirectories(CombinePaths(CodeDirectory, 'source-files'));
     StringToFile(FilenameToUriSafe(CombinePaths(
       CombinePaths(CodeDirectory, 'source-files'), 'component.pas')),
@@ -443,7 +445,7 @@ begin
       '  RegisterSerializableComponent(TComponent, ''Component'');');
 
     DataDirectory := CombinePaths(ProjectDirectory,
-      CombinePaths('data', FirstPackageId));
+      CombinePaths(PackageDataDirectoryName, FirstPackageId));
     CheckForceDirectories(DataDirectory);
     StringToFile(FilenameToUriSafe(CombinePaths(DataDirectory, 'asset.txt')),
       'package data');
@@ -465,7 +467,8 @@ begin
         while PathElements.GetNext do
           Paths.Add(PathElements.Current.AttributeString('value'));
         AssertEquals(2, Paths.Count);
-        AssertEquals('packages/' + SecondPackageId + '/', Paths[0]);
+        AssertEquals(PackageCodeDirectoryName + '/' + SecondPackageId + '/',
+          Paths[0]);
         AssertEquals('other/', Paths[1]);
       finally
         FreeAndNil(Paths);

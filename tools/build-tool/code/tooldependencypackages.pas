@@ -58,7 +58,7 @@ uses SysUtils,
   CastleDownload,
   CastleLog,
   ToolPackageLibrary, ToolGitDownload, ToolDependencyPackagesManifest,
-  XMLWrite;
+  ToolPackageConstants, XMLWrite;
 
 const
   DependencyPackagesElementName = 'dependency_packages';
@@ -102,6 +102,18 @@ begin
       [PackageId]);
 end;
 
+function PackageCodeSearchPath(const PackageId, RelativeDirectory: String): String;
+var
+  Path: String;
+begin
+  Path := CombinePaths(PackageCodeDirectoryName,
+    CheckedPackageDirectoryName(PackageId));
+  if RelativeDirectory <> '' then
+    Path := CombinePaths(Path, RelativeDirectory);
+  Result := IncludeTrailingPathDelimiter(Path);
+  Result := StringReplace(Result, PathDelim, '/', [rfReplaceAll]);
+end;
+
 function ChildElementOrCreate(const Parent: TDOMElement;
   const ChildName: String): TDOMElement;
 var
@@ -131,10 +143,7 @@ var
   Paths: TXMLElementIterator;
   SearchPath: String;
 begin
-  SearchPath := 'packages/' + CheckedPackageDirectoryName(PackageId) + '/';
-  if RelativeDirectory <> '' then
-    SearchPath := SearchPath + StringReplace(RelativeDirectory, '\', '/',
-      [rfReplaceAll]) + '/';
+  SearchPath := PackageCodeSearchPath(PackageId, RelativeDirectory);
   CompilerOptions := ChildElementOrCreate(Document.DocumentElement,
     'compiler_options');
   SearchPaths := ChildElementOrCreate(CompilerOptions, 'search_paths');
@@ -358,7 +367,7 @@ begin
   if SearchPaths = nil then
     Exit;
 
-  PackageSearchPath := 'packages/' + CheckedPackageDirectoryName(PackageId) + '/';
+  PackageSearchPath := PackageCodeSearchPath(PackageId, '');
   CurrentNode := SearchPaths.FirstChild;
   while CurrentNode <> nil do
   begin
@@ -367,7 +376,7 @@ begin
       (TDOMElement(CurrentNode).TagName = 'path') then
     begin
       PathValue := StringReplace(
-        TDOMElement(CurrentNode).AttributeString('value'), '\', '/',
+        TDOMElement(CurrentNode).AttributeString('value'), PathDelim, '/',
         [rfReplaceAll]);
       if Copy(PathValue, 1, Length(PackageSearchPath)) = PackageSearchPath then
         SearchPaths.RemoveChild(CurrentNode);
@@ -448,7 +457,8 @@ begin
   RegisterEditor := PackageHasFeature(PackageInfo, PackageFeatureRegisterEditor);
   ProjectDirectory := ExtractFileDir(ExpandFileName(ManifestFileName));
   PackageDirectory := CombinePaths(ProjectDirectory,
-    CombinePaths('packages', CheckedPackageDirectoryName(CheckedId)));
+    CombinePaths(PackageCodeDirectoryName,
+      CheckedPackageDirectoryName(CheckedId)));
   PackageIds := TStringList.Create;
   PackageIds.CaseSensitive := true;
   try
@@ -565,9 +575,11 @@ begin
 
       ProjectDirectory := ExtractFileDir(ExpandFileName(ManifestFileName));
       CodeDirectory := CombinePaths(ProjectDirectory,
-        CombinePaths('packages', CheckedPackageDirectoryName(CheckedId)));
+        CombinePaths(PackageCodeDirectoryName,
+          CheckedPackageDirectoryName(CheckedId)));
       DataDirectory := CombinePaths(ProjectDirectory,
-        CombinePaths('data', CheckedPackageDirectoryName(CheckedId)));
+        CombinePaths(PackageDataDirectoryName,
+          CheckedPackageDirectoryName(CheckedId)));
       if DirectoryExists(CodeDirectory) then
         CollectPackageEditorUnits(CodeDirectory, PackageEditorUnits);
       RemovePackageEditorUnits(Document, PackageEditorUnits);

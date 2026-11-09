@@ -403,9 +403,9 @@ begin
   Reference := AnalyzeGitRepositoryUrl(PackageInfo.RepoUrl);
   PackageDirectory := PackageInfo.Id;
   CodeDestination := CombinePaths(ProjectDirectory,
-    'packages' + PathDelim + PackageDirectory);
+    CombinePaths(PackageCodeDirectoryName, PackageDirectory));
   DataDestination := CombinePaths(ProjectDirectory,
-    'data' + PathDelim + PackageDirectory);
+    CombinePaths(PackageDataDirectoryName, PackageDirectory));
   if Reference.RawFileUrl <> '' then
   begin
     if CopyCode then

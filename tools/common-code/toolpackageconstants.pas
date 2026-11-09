@@ -21,6 +21,8 @@ unit ToolPackageConstants;
 interface
 
 const
+  PackageCodeDirectoryName = 'packages';
+  PackageDataDirectoryName = 'data';
   GitRepositoryUrlSchemes: array [0..1] of String = ('http', 'https');
   GitRepositoryViewSegments: array [0..1] of String = ('blob', 'tree');
   GitInvalidPathSegments: array [0..1] of String = ('.', '..');
