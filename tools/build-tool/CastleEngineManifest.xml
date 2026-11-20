@@ -12,6 +12,7 @@
     <search_paths>
       <path value="code/" />
       <path value="../common-code/" />
+      <path value="../../src/files/" />
       <path value="embedded_images/" />
     </search_paths>
     <defines>

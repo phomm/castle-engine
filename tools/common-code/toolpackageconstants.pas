@@ -28,7 +28,9 @@ const
   GitInvalidPathSegments: array [0..1] of String = ('.', '..');
   GitInvalidPathSubstrings: array [0..1] of String = ('../', '/..');
   GitHubHostName = 'github.com';
+  GitLabHostName = 'gitlab.com';
   GitHubRawFileUrlPrefix = 'https://raw.githubusercontent.com/';
+  GitLabRawFileUrlPrefix = '/-/raw/';
   GitRepositorySuffix = '.git';
   GitSingleFileViewSegment = 'blob';
   GitRepositoryViewPrefixSegment = '-';

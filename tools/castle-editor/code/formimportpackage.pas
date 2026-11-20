@@ -783,8 +783,6 @@ end;
 
 initialization
   InstalledPackageIds := TStringList.Create;
-  // test
-  // InstalledPackageIds.Add('castle-bars');
 
 finalization
   FreeAndNil(InstalledPackageIds);

@@ -25,6 +25,7 @@ type
   TTestToolDependencyPackages = class(TCastleTestCase)
   published
     procedure TestGitRepositoryUrlAnalysis;
+    procedure TestGitRepositoryArchiveUrl;
     procedure TestGitAvailability;
     procedure TestDownloadPackageFromLocalRepository;
     procedure TestSeparateToolProjectDirectory;
@@ -125,7 +126,41 @@ begin
   AssertEquals('master', Reference.Branch);
   AssertEquals('src/component.pas', Reference.Path);
   AssertTrue(Reference.IsSingleFile);
-  AssertEquals('', Reference.RawFileUrl);
+  AssertEquals('https://gitlab.com/user/repository/-/raw/master/src/component.pas',
+    Reference.RawFileUrl);
+
+  Reference := AnalyzeGitRepositoryUrl(
+    'https://gitlab.com/EugeneLoza/ui-shaker/-/blob/master/uishaker/castleuishaker.pas?ref_type=heads');
+  AssertEquals('https://gitlab.com/EugeneLoza/ui-shaker/-/raw/master/uishaker/castleuishaker.pas',
+    Reference.RawFileUrl);
+end;
+
+procedure TTestToolDependencyPackages.TestGitRepositoryArchiveUrl;
+var
+  Reference: TGitRepositoryReference;
+begin
+  Reference := AnalyzeGitRepositoryUrl('https://github.com/user/repository');
+  AssertEquals('https://github.com/user/repository/archive/HEAD.zip',
+    GitRepositoryArchiveUrl(Reference));
+
+  Reference := AnalyzeGitRepositoryUrl(
+    'https://github.com/user/repository/tree/main/src');
+  AssertEquals('https://api.github.com/repos/user/repository/zipball/main',
+    GitRepositoryArchiveUrl(Reference));
+
+  Reference := AnalyzeGitRepositoryUrl(
+    'https://gitlab.com/group/subgroup/repository/-/tree/main/src');
+  AssertEquals('https://gitlab.com/api/v4/projects/group%2Fsubgroup%2Frepository/repository/archive.zip?sha=main',
+    GitRepositoryArchiveUrl(Reference));
+
+  Reference := AnalyzeGitRepositoryUrl('https://example.com/user/repository');
+  try
+    GitRepositoryArchiveUrl(Reference);
+    Fail('Expected unsupported repository host exception');
+  except
+    on E: Exception do
+      AssertTrue(Pos('please file a request', LowerCase(E.Message)) <> 0);
+  end;
 end;
 
 procedure TTestToolDependencyPackages.TestGitAvailability;

@@ -41,6 +41,9 @@ type
   within the repository. }
 function AnalyzeGitRepositoryUrl(const Url: String): TGitRepositoryReference;
 
+{ Return a supported host's ZIP archive URL for a repository reference. }
+function GitRepositoryArchiveUrl(const Reference: TGitRepositoryReference): String;
+
 { Return whether the Git executable can be found on the system PATH. }
 function IsGitInstalled: Boolean;
 
@@ -67,7 +70,8 @@ implementation
 
 uses Classes, SysUtils, StrUtils,
   CastleDownload, CastleFilesUtils, CastleInternalProcess, CastleLog,
-  CastleStringUtils, CastleFindFiles, ToolPackageConstants;
+  CastleStringUtils, CastleFindFiles, CastleUriUtils, CastleZip,
+  ToolPackageConstants;
 
 function IsGitInstalled: Boolean;
 begin
@@ -183,8 +187,15 @@ begin
         ViewKind := PathSegments[FirstPathSegment];
         Result.IsSingleFile := ViewKind = GitSingleFileViewSegment;
         Result.RawFileUrl := '';
-        if (LowerCase(Authority) = GitHubHostName) and Result.IsSingleFile then
-          Result.RawFileUrl := GitHubRawFileUrlPrefix + RepositoryPath + '/';
+        if Result.IsSingleFile then
+        begin
+          if LowerCase(Authority) = GitHubHostName then
+            Result.RawFileUrl := GitHubRawFileUrlPrefix + RepositoryPath + '/'
+          else
+          if LowerCase(Authority) = GitLabHostName then
+            Result.RawFileUrl := Scheme + '://' + Authority + '/' +
+              RepositoryPath + GitLabRawFileUrlPrefix;
+        end;
         Inc(FirstPathSegment);
         if FirstPathSegment >= PathSegments.Count then
           raise Exception.CreateFmt(
@@ -359,6 +370,132 @@ begin
   CheckCopyFile(SourceFileName, DestinationFileName);
 end;
 
+function GitRepositoryArchiveUrl(const Reference: TGitRepositoryReference): String;
+var
+  Host, RepositoryPath, Ref: String;
+  P: Integer;
+begin
+  P := Pos('://', Reference.RepositoryUrl) + 3;
+  RepositoryPath := Copy(Reference.RepositoryUrl, P, MaxInt);
+  P := Pos('/', RepositoryPath);
+  Host := LowerCase(Copy(RepositoryPath, 1, P - 1));
+  Delete(RepositoryPath, 1, P);
+  if (Length(RepositoryPath) >= Length(GitRepositorySuffix)) and
+    (Copy(RepositoryPath, Length(RepositoryPath) - Length(GitRepositorySuffix) + 1,
+      Length(GitRepositorySuffix)) = GitRepositorySuffix) then
+    Delete(RepositoryPath, Length(RepositoryPath) - Length(GitRepositorySuffix) + 1,
+      Length(GitRepositorySuffix));
+  Ref := Reference.Branch;
+
+  if Host = GitHubHostName then
+  begin
+    if Reference.Branch = '' then
+      Result := 'https://github.com/' + RepositoryPath + '/archive/HEAD.zip'
+    else
+      Result := 'https://api.github.com/repos/' + RepositoryPath +
+        '/zipball/' + UrlEncode(Ref);
+  end
+  else
+  if Host = GitLabHostName then
+    Result := 'https://' + Host + '/api/v4/projects/' +
+      UrlEncode(RepositoryPath) + '/repository/archive.zip?sha=' +
+      UrlEncode(IfThen(Ref = '', 'HEAD', Ref))
+  else
+    raise Exception.CreateFmt(
+      'Downloading packages from repositories hosted at "%s" is not supported yet. Please file a request at %s/issues.',
+      [Host, 'https://github.com/castle-engine/castle-engine']);
+end;
+
+function SafeArchivePath(const Path: String): Boolean;
+var
+  Parts: TStringList;
+  I: Integer;
+begin
+  Result := false;
+  if (Path = '') or (Path[1] = '/') or (Pos('\', Path) <> 0) or
+    ((Length(Path) >= 2) and (Path[2] = ':')) then
+    Exit;
+  Parts := TStringList.Create;
+  try
+    Parts.StrictDelimiter := true;
+    Parts.Delimiter := '/';
+    Parts.DelimitedText := Path;
+    for I := 0 to Parts.Count - 1 do
+      if (Parts[I] = '') or (Parts[I] = '.') or (Parts[I] = '..') then
+        Exit;
+    Result := Parts.Count > 1;
+  finally FreeAndNil(Parts) end;
+end;
+
+procedure ExtractRepositoryArchive(const Url, StagingDirectory: String;
+  out PackageSourceDirectory: String);
+var
+  Zip: TCastleZip;
+  ArchiveStream, FileStream: TStream;
+  Entries: TStrings;
+  Entry, RootDirectory, RelativePath, DestinationFileName: String;
+  I, SlashPosition: Integer;
+  DestinationStream: TFileStream;
+  PreviousEnableBlockingDownloads: Boolean;
+begin
+  PreviousEnableBlockingDownloads := EnableBlockingDownloads;
+  EnableBlockingDownloads := true;
+  try
+    ArchiveStream := Download(Url);
+    try
+      Zip := TCastleZip.Create;
+      try
+        Zip.Open(ArchiveStream, false);
+        Entries := Zip.Files;
+        RootDirectory := '';
+        for I := 0 to Entries.Count - 1 do
+        begin
+          Entry := StringReplace(Entries[I], '\', '/', [rfReplaceAll]);
+          if not SafeArchivePath(Entry) then
+            raise Exception.CreateFmt('Unsafe path "%s" in repository archive', [Entry]);
+          SlashPosition := Pos('/', Entry);
+          if SlashPosition = 0 then
+            raise Exception.CreateFmt('Unexpected path "%s" in repository archive', [Entry]);
+          if RootDirectory = '' then
+            RootDirectory := Copy(Entry, 1, SlashPosition - 1)
+          else
+          if Copy(Entry, 1, SlashPosition - 1) <> RootDirectory then
+            raise Exception.Create('Repository archive has multiple root directories');
+        end;
+        if RootDirectory = '' then
+          raise Exception.Create('Repository archive is empty');
+
+        CheckForceDirectories(StagingDirectory);
+        for I := 0 to Entries.Count - 1 do
+        begin
+          Entry := StringReplace(Entries[I], '\', '/', [rfReplaceAll]);
+          RelativePath := Copy(Entry, Length(RootDirectory) + 2, MaxInt);
+          if RelativePath = '' then
+            Continue;
+          DestinationFileName := CombinePaths(StagingDirectory,
+            StringReplace(RelativePath, '/', PathDelim, [rfReplaceAll]));
+          if Entry[Length(Entry)] = '/' then
+            CheckForceDirectories(DestinationFileName)
+          else
+          begin
+            CheckForceDirectories(ExtractFilePath(DestinationFileName));
+            FileStream := Zip.Read(Entry);
+            try
+              DestinationStream := TFileStream.Create(DestinationFileName, fmCreate);
+              try
+                DestinationStream.CopyFrom(FileStream, 0);
+              finally FreeAndNil(DestinationStream) end;
+            finally FreeAndNil(FileStream) end;
+          end;
+        end;
+        PackageSourceDirectory := StagingDirectory;
+      finally FreeAndNil(Zip) end;
+    finally FreeAndNil(ArchiveStream) end;
+  finally
+    EnableBlockingDownloads := PreviousEnableBlockingDownloads;
+  end;
+end;
+
 procedure ClearReadOnlyAttributes(const Directory: String);
 var
   FileInfos: TFileInfoList;
@@ -388,7 +525,7 @@ var
   Reference: TGitRepositoryReference;
   PackageDirectory, CodeDestination, DataDestination: String;
   StagingDirectory, PackageSourceDirectory: String;
-  Output, CheckedOutPath, FileName: String;
+  Output, CheckedOutPath, FileName, ArchiveUrl: String;
   StagingGuid: TGUID;
   Arguments: TCastleStringList;
   Environment: TStringList;
@@ -417,11 +554,6 @@ begin
     Exit;
   end;
 
-  if not IsGitInstalled then
-    raise Exception.CreateFmt(
-      'Package "%s" uses copy-code or copy-data, which is not supported for now because Git is not installed',
-      [PackageInfo.Id]);
-
   if CreateGUID(StagingGuid) <> 0 then
     raise Exception.Create('Cannot create a unique temporary Git clone path');
   StagingDirectory := CombinePaths(GetTempDir(false),
@@ -434,30 +566,38 @@ begin
   Environment := nil;
   PackageSourceDirectory := StagingDirectory;
   try
-    Environment := EnvironmentStrings;
-    Arguments.Add('clone');
-    Arguments.Add('--depth');
-    Arguments.Add('1');
-    if Reference.Path <> '' then
+    if IsGitInstalled then
     begin
-      Arguments.Add('--filter=blob:none');
-      Arguments.Add('--sparse');
-    end;
-    if Reference.Branch <> '' then
+      Environment := EnvironmentStrings;
+      Arguments.Add('clone');
+      Arguments.Add('--depth');
+      Arguments.Add('1');
+      if Reference.Path <> '' then
+      begin
+        Arguments.Add('--filter=blob:none');
+        Arguments.Add('--sparse');
+      end;
+      if Reference.Branch <> '' then
+      begin
+        Arguments.Add('--branch');
+        Arguments.Add(Reference.Branch);
+      end;
+      Arguments.Add(Reference.RepositoryUrl);
+      Arguments.Add(StagingDirectory);
+      Environment.Values['GIT_TERMINAL_PROMPT'] := '0';
+      ExecuteCommandCapture('', 'git', Arguments.ToArray, Output, ExitStatus,
+        nil, nil, [], Environment);
+      if ExitStatus <> 0 then
+        raise Exception.CreateFmt('Git clone failed for "%s" (exit status %d): %s',
+          [Reference.RepositoryUrl, ExitStatus, Trim(Output)]);
+    end else
     begin
-      Arguments.Add('--branch');
-      Arguments.Add(Reference.Branch);
+      ArchiveUrl := GitRepositoryArchiveUrl(Reference);
+      ExtractRepositoryArchive(ArchiveUrl, StagingDirectory,
+        PackageSourceDirectory);
     end;
-    Arguments.Add(Reference.RepositoryUrl);
-    Arguments.Add(StagingDirectory);
-    Environment.Values['GIT_TERMINAL_PROMPT'] := '0';
-    ExecuteCommandCapture('', 'git', Arguments.ToArray, Output, ExitStatus,
-      nil, nil, [], Environment);
-    if ExitStatus <> 0 then
-      raise Exception.CreateFmt('Git clone failed for "%s" (exit status %d): %s',
-        [Reference.RepositoryUrl, ExitStatus, Trim(Output)]);
 
-    if Reference.Path <> '' then
+    if IsGitInstalled and (Reference.Path <> '') then
     begin
       if Reference.IsSingleFile then
       begin
@@ -481,6 +621,16 @@ begin
         raise Exception.CreateFmt('Git path "%s" was not found in "%s"',
           [Reference.Path, Reference.RepositoryUrl]);
       PackageSourceDirectory := CheckedOutPath;
+    end else
+    if Reference.Path <> '' then
+    begin
+      CheckedOutPath := CombinePaths(StagingDirectory,
+        StringReplace(Reference.Path, '/', PathDelim, [rfReplaceAll]));
+      if not FileExists(CheckedOutPath) and
+        not DirectoryExists(CheckedOutPath) then
+        raise Exception.CreateFmt('Git path "%s" was not found in "%s"',
+          [Reference.Path, Reference.RepositoryUrl]);
+      PackageSourceDirectory := CheckedOutPath;
     end;
 
     SkipTest := PackageHasFeature(PackageInfo, PackageFeatureSkipTest);
@@ -488,10 +638,12 @@ begin
     if Reference.IsSingleFile then
     begin
       FileName := ExtractFileName(Reference.Path);
+      CheckedOutPath := CombinePaths(StagingDirectory,
+        StringReplace(Reference.Path, '/', PathDelim, [rfReplaceAll]));
       if CopyCode then
-        CopySingleFile(PackageSourceDirectory, CodeDestination, FileName);
+        CopySingleFile(CheckedOutPath, CodeDestination, FileName);
       if CopyData then
-        CopySingleFile(PackageSourceDirectory, DataDestination, FileName);
+        CopySingleFile(CheckedOutPath, DataDestination, FileName);
     end else
     begin
       if CopyCode then
