@@ -527,13 +527,19 @@ begin
   end else
   if Command = 'install-package' then
   begin
-    Parameters.CheckHigh(2);
-    InstallPackage(DependencyPackagesManifestFileName, Parameters[2]);
+    Parameters.CheckHigh(3);
+    if Parameters.Count > 3 then
+      InstallPackage(DependencyPackagesManifestFileName, Parameters[2], Parameters[3])
+    else
+      InstallPackage(DependencyPackagesManifestFileName, Parameters[2]);
   end else
   if Command = 'update-package' then
   begin
-    Parameters.CheckHigh(2);
-    UpdatePackage(DependencyPackagesManifestFileName, Parameters[2]);
+    Parameters.CheckHigh(3);
+    if Parameters.Count > 3 then
+      UpdatePackage(DependencyPackagesManifestFileName, Parameters[2], Parameters[3])
+    else
+      UpdatePackage(DependencyPackagesManifestFileName, Parameters[2]);
   end else
   if Command = 'remove-package' then
   begin

@@ -115,11 +115,14 @@ var
   ExitStatus: Integer;
   Lines: TStringList;
   I, TabPosition, ExistingRef: Integer;
+  RefIndex: Integer;
   Commit, RefName: String;
   RepositoryUrl: String;
   ViewPosition: Integer;
   Ref: TPackageGitRef;
   HeadCommit: String;
+  UniqueRefs: TPackageGitRefArray;
+  HasHeadCommit: Boolean;
 begin
   PackageInfo.GitRefs := nil;
   if FindExe('git') = '' then
@@ -135,7 +138,7 @@ begin
   try
     ExecuteCommandCapture('', 'git', ['ls-remote', '--tags', '--heads',
       RepositoryUrl],
-      Output, ExitStatus);
+      Output, ExitStatus, nil, nil, [ecNoConsole]);
   except
     on E: Exception do
     begin
@@ -185,17 +188,11 @@ begin
       Ref.Commit := Commit;
       SetLength(PackageInfo.GitRefs, Length(PackageInfo.GitRefs) + 1);
       PackageInfo.GitRefs[High(PackageInfo.GitRefs)] := Ref;
-      if RefName = 'HEAD' then
-      begin
-        Ref.Name := 'master';
-        SetLength(PackageInfo.GitRefs, Length(PackageInfo.GitRefs) + 1);
-        PackageInfo.GitRefs[High(PackageInfo.GitRefs)] := Ref;
-      end;
     end;
   finally FreeAndNil(Lines) end;
 
   ExecuteCommandCapture('', 'git', ['ls-remote', '--symref', RepositoryUrl,
-    'HEAD'], Output, ExitStatus);
+    'HEAD'], Output, ExitStatus, nil, nil, [ecNoConsole]);
   if ExitStatus = 0 then
   begin
     HeadCommit := '';
@@ -216,18 +213,54 @@ begin
     finally FreeAndNil(Lines) end;
     if HeadCommit <> '' then
     begin
-      for I := 0 to 1 do
-      begin
-        if I = 0 then
-          Ref.Name := 'HEAD'
-        else
-          Ref.Name := 'master';
-        Ref.Commit := HeadCommit;
-        SetLength(PackageInfo.GitRefs, Length(PackageInfo.GitRefs) + 1);
-        PackageInfo.GitRefs[High(PackageInfo.GitRefs)] := Ref;
-      end;
+      { The default branch commit is represented once, as "master". }
+      Ref.Name := 'master';
+      Ref.Commit := HeadCommit;
+      SetLength(PackageInfo.GitRefs, Length(PackageInfo.GitRefs) + 1);
+      PackageInfo.GitRefs[High(PackageInfo.GitRefs)] := Ref;
     end;
   end;
+
+  { Merge aliases and tags that point to the same commit. }
+  UniqueRefs := nil;
+  for I := 0 to High(PackageInfo.GitRefs) do
+  begin
+    if (HeadCommit <> '') and (PackageInfo.GitRefs[I].Commit = HeadCommit) then
+      Continue;
+    HasHeadCommit := false;
+    for RefIndex := 0 to High(UniqueRefs) do
+      if UniqueRefs[RefIndex].Commit = PackageInfo.GitRefs[I].Commit then
+      begin
+        HasHeadCommit := true;
+        { Prefer a named tag to a branch alias for non-default commits. }
+        if (Copy(PackageInfo.GitRefs[I].Name, 1, 10) = 'refs/tags/') and
+          (Copy(UniqueRefs[RefIndex].Name, 1, 11) = 'refs/heads/') then
+        begin
+          UniqueRefs[RefIndex] := PackageInfo.GitRefs[I];
+          Delete(UniqueRefs[RefIndex].Name, 1, 10);
+        end;
+        Break;
+      end;
+    if not HasHeadCommit then
+    begin
+      Ref := PackageInfo.GitRefs[I];
+      if Copy(Ref.Name, 1, 10) = 'refs/tags/' then
+        Delete(Ref.Name, 1, 10)
+      else
+      if Copy(Ref.Name, 1, 11) = 'refs/heads/' then
+        Delete(Ref.Name, 1, 11);
+      SetLength(UniqueRefs, Length(UniqueRefs) + 1);
+      UniqueRefs[High(UniqueRefs)] := Ref;
+    end;
+  end;
+  if HeadCommit <> '' then
+  begin
+    Ref.Name := 'master';
+    Ref.Commit := HeadCommit;
+    SetLength(UniqueRefs, Length(UniqueRefs) + 1);
+    UniqueRefs[High(UniqueRefs)] := Ref;
+  end;
+  PackageInfo.GitRefs := UniqueRefs;
 end;
 
 function PackageHasFeature(const PackageInfo: TPackageInfo;
@@ -312,7 +345,6 @@ begin
       PackageInfo.ImageUrl := RequiredString(PackageData, 'image');
       PackageInfo.RepoUrl := RequiredString(PackageData, 'page');
       PackageInfo.Author := RequiredString(PackageData, 'author');
-      LoadPackageGitRefs(PackageInfo);
 
       Field := PackageData.Find('links');
       if (Field = nil) or (Field.JSONType <> jtArray) then

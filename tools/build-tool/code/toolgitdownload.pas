@@ -64,7 +64,7 @@ function DirectoryContainsPackageContent(const Directory: String;
 { Download the sources/data described by PackageInfo into ProjectDirectory.
   Code goes into packages/<id>, data into data/<id>. }
 procedure DownloadPackage(const PackageInfo: TPackageInfo;
-  const ProjectDirectory: String);
+  const ProjectDirectory: String; const GitRef: String = '');
 
 implementation
 
@@ -520,7 +520,7 @@ begin
 end;
 
 procedure DownloadPackage(const PackageInfo: TPackageInfo;
-  const ProjectDirectory: String);
+  const ProjectDirectory: String; const GitRef: String);
 var
   Reference: TGitRepositoryReference;
   PackageDirectory, CodeDestination, DataDestination: String;
@@ -538,6 +538,19 @@ begin
     Exit;
 
   Reference := AnalyzeGitRepositoryUrl(PackageInfo.RepoUrl);
+  if GitRef <> '' then
+  begin
+    if Copy(GitRef, 1, 10) = 'refs/tags/' then
+      Reference.Branch := Copy(GitRef, 11, MaxInt)
+    else
+    if Copy(GitRef, 1, 11) = 'refs/heads/' then
+      Reference.Branch := Copy(GitRef, 12, MaxInt)
+    else
+    if (GitRef = 'HEAD') or (GitRef = 'master') then
+      Reference.Branch := ''
+    else
+      Reference.Branch := GitRef;
+  end;
   PackageDirectory := PackageInfo.Id;
   CodeDestination := CombinePaths(ProjectDirectory,
     CombinePaths(PackageCodeDirectoryName, PackageDirectory));

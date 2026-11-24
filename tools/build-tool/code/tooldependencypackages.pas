@@ -32,7 +32,8 @@ procedure ReadInstalledPackages(const ManifestFileName: String;
 procedure GetInstalledPackages(const ManifestFileName: String);
 
 { Add a dependency package ID to the project manifest. }
-procedure InstallPackage(const ManifestFileName, PackageId: String);
+procedure InstallPackage(const ManifestFileName, PackageId: String;
+  const GitRef: String = '');
 
 { Add package directories containing Pascal source files to compiler search paths. }
 procedure AddPackageCodeSearchPaths(const Document: TXMLDocument;
@@ -45,7 +46,8 @@ procedure AddPackageEditorUnits(const Document: TXMLDocument;
 
 { Check that a dependency package ID is installed.
   Package metadata, including its supported features, is read from the package library. }
-procedure UpdatePackage(const ManifestFileName, PackageId: String);
+procedure UpdatePackage(const ManifestFileName, PackageId: String;
+  const GitRef: String = '');
 
 { Remove a dependency package and its installed files from the project. }
 procedure RemovePackage(const ManifestFileName, PackageId: String);
@@ -434,7 +436,8 @@ begin
   finally FreeAndNil(PackageIds) end;
 end;
 
-procedure InstallPackage(const ManifestFileName, PackageId: String);
+procedure InstallPackage(const ManifestFileName, PackageId: String;
+  const GitRef: String);
 var
   Document: TXMLDocument;
   PackagesElement, PackageElement: TDOMElement;
@@ -477,7 +480,7 @@ begin
         DependencyPackagesWrite(Format('Downloading package "%s"',
           [CheckedId]));
         PackageInfo.Id := CheckedPackageDirectoryName(CheckedId);
-        DownloadPackage(PackageInfo, ProjectDirectory);
+        DownloadPackage(PackageInfo, ProjectDirectory, GitRef);
       end;
 
       if CopyCode then
@@ -499,6 +502,8 @@ begin
       if not AlreadyInstalled then
       begin
         PackageElement := Document.CreateElement(DependencyPackageElementName);
+        if GitRef <> '' then
+          PackageElement.SetAttribute('ref', UTF8Decode(GitRef));
         PackageElement.AppendChild(Document.CreateTextNode(UTF8Decode(CheckedId)));
         DependencyPackagesWrite(Format('Appending <%s> with text "%s" to <%s>',
           [DependencyPackageElementName, CheckedId, DependencyPackagesElementName]));
@@ -517,14 +522,17 @@ begin
   finally FreeAndNil(PackageIds) end;
 end;
 
-procedure UpdatePackage(const ManifestFileName, PackageId: String);
+procedure UpdatePackage(const ManifestFileName, PackageId: String;
+  const GitRef: String);
 var
   Document: TXMLDocument;
-  PackagesElement: TDOMElement;
+  PackagesElement, PackageElement: TDOMElement;
   PackageIds: TStringList;
   CheckedId: String;
   PackageInfo: TPackageInfo;
+  Children: TXMLElementIterator;
 begin
+  PackageElement := nil;
   DependencyPackagesWrite(Format('Update command: manifest="%s", package="%s"',
     [ManifestFileName, PackageId]));
   CheckedId := CheckedPackageId(PackageId);
@@ -541,6 +549,22 @@ begin
     try
       if PackageIds.IndexOf(CheckedId) = -1 then
         raise Exception.CreateFmt('Package "%s" is not installed', [CheckedId]);
+      if GitRef <> '' then
+      begin
+        DownloadPackage(PackageInfo, ExtractFileDir(ExpandFileName(ManifestFileName)), GitRef);
+        Children := PackagesElement.ChildrenIterator(DependencyPackageElementName);
+        try
+          while Children.GetNext do
+            if Trim(Children.Current.TextData) = CheckedId then
+            begin
+              PackageElement := Children.Current;
+              Break;
+            end;
+        finally FreeAndNil(Children) end;
+        if PackageElement <> nil then
+          PackageElement.SetAttribute('ref', UTF8Decode(GitRef));
+        WriteXMLFile(Document, ManifestFileName);
+      end;
       DependencyPackagesWrite(Format(
         'Package "%s" is listed in the manifest; no manifest write is needed',
         [CheckedId]));

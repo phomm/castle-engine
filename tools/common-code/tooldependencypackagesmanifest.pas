@@ -27,11 +27,13 @@ uses Classes, DOM;
   UseLogOutput writes diagnostic messages through WritelnLog instead of stdout. }
 procedure LoadDependencyPackagesManifest(const ManifestFileName: String;
   out Document: TXMLDocument; out PackagesElement: TDOMElement;
-  const PackageIds: TStrings; const UseLogOutput: Boolean = false);
+  const PackageIds: TStrings; const UseLogOutput: Boolean = false;
+  const PackageRefs: TStrings = nil);
 
 { Read installed dependency package IDs from a project manifest. }
 procedure ReadInstalledDependencyPackages(const ManifestFileName: String;
-  const PackageIds: TStrings; const UseLogOutput: Boolean = false);
+  const PackageIds: TStrings; const UseLogOutput: Boolean = false;
+  const PackageRefs: TStrings = nil);
 
 implementation
 
@@ -53,11 +55,13 @@ end;
 
 procedure LoadDependencyPackagesManifest(const ManifestFileName: String;
   out Document: TXMLDocument; out PackagesElement: TDOMElement;
-  const PackageIds: TStrings; const UseLogOutput: Boolean);
+  const PackageIds: TStrings; const UseLogOutput: Boolean;
+  const PackageRefs: TStrings);
 var
   PackageSections, ChildElements: TXMLElementIterator;
   ChildElement: TDOMElement;
   PackageId: String;
+  PackageRef: String;
 begin
   Document := nil;
   PackagesElement := nil;
@@ -117,6 +121,11 @@ begin
           raise Exception.CreateFmt('Duplicate package ID "%s" in "%s"',
             [PackageId, ManifestFileName]);
         PackageIds.Add(PackageId);
+        if PackageRefs <> nil then
+        begin
+          PackageRef := ChildElement.AttributeStringDef('ref', '');
+          PackageRefs.Values[PackageId] := PackageRef;
+        end;
         DependencyPackagesWrite(
           Format('Read package "%s"', [PackageId]), UseLogOutput);
       end;
@@ -130,14 +139,17 @@ begin
 end;
 
 procedure ReadInstalledDependencyPackages(const ManifestFileName: String;
-  const PackageIds: TStrings; const UseLogOutput: Boolean);
+  const PackageIds: TStrings; const UseLogOutput: Boolean;
+  const PackageRefs: TStrings);
 var
   Document: TXMLDocument;
   PackagesElement: TDOMElement;
 begin
   PackageIds.Clear;
+  if PackageRefs <> nil then
+    PackageRefs.Clear;
   LoadDependencyPackagesManifest(ManifestFileName, Document, PackagesElement,
-    PackageIds, UseLogOutput);
+    PackageIds, UseLogOutput, PackageRefs);
   FreeAndNil(Document);
 end;
 
