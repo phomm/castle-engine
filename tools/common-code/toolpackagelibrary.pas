@@ -32,6 +32,17 @@ type
   { Feature identifiers supported by a package. }
   TPackageFeatureArray = array of String;
 
+  { Git ref name and commit hash available for a package repository. }
+  TPackageGitRef = record
+    { Git ref name, e.g. refs/tags/v1.0 or HEAD. }
+    Name: String;
+    { Full commit hash. }
+    Commit: String;
+  end;
+
+  { Git refs available for a package repository. }
+  TPackageGitRefArray = array of TPackageGitRef;
+
   { Component information from the packages library. }
   TPackageInfo = record
     { Stable package identifier. }
@@ -50,6 +61,9 @@ type
     Links: array of TPackageLink;
     { Features supported by the package. }
     Features: TPackageFeatureArray;
+    { Git tags and branch heads reported by the repository, when Git is
+      installed. }
+    GitRefs: TPackageGitRefArray;
   end;
 
   { Array of package information returned by @link(LoadPackageLibrary). }
@@ -82,6 +96,9 @@ function PackageHasFeature(const PackageInfo: TPackageInfo;
 { Download the JSON packages library and parse it. }
 function LoadPackageLibrary(const Url: String): TPackageInfoArray;
 
+{ Query a package repository for tags and branch heads using Git. }
+procedure LoadPackageGitRefs(var PackageInfo: TPackageInfo);
+
 { Get a package image URL from the directory containing the given library URL,
   using its images/ subdirectory. }
 function PackageLibraryImageUrl(const LibraryUrl, ImagePath: String): String;
@@ -90,7 +107,128 @@ implementation
 
 uses
   Classes, SysUtils, fpjson, jsonparser,
-  CastleDownload, CastleLog;
+  CastleDownload, CastleLog, CastleFilesUtils, CastleInternalProcess;
+
+procedure LoadPackageGitRefs(var PackageInfo: TPackageInfo);
+var
+  Output: String;
+  ExitStatus: Integer;
+  Lines: TStringList;
+  I, TabPosition, ExistingRef: Integer;
+  Commit, RefName: String;
+  RepositoryUrl: String;
+  ViewPosition: Integer;
+  Ref: TPackageGitRef;
+  HeadCommit: String;
+begin
+  PackageInfo.GitRefs := nil;
+  if FindExe('git') = '' then
+    Exit;
+  if PackageInfo.RepoUrl = '' then
+    Exit;
+  RepositoryUrl := PackageInfo.RepoUrl;
+  ViewPosition := Pos('/tree/', RepositoryUrl);
+  if ViewPosition = 0 then
+    ViewPosition := Pos('/blob/', RepositoryUrl);
+  if ViewPosition > 0 then
+    Delete(RepositoryUrl, ViewPosition, MaxInt);
+  try
+    ExecuteCommandCapture('', 'git', ['ls-remote', '--tags', '--heads',
+      RepositoryUrl],
+      Output, ExitStatus);
+  except
+    on E: Exception do
+    begin
+      WritelnLog('PackageLibrary', Format('Cannot query Git refs for package "%s": %s',
+        [PackageInfo.Id, E.Message]));
+      Exit;
+    end;
+  end;
+  if ExitStatus <> 0 then
+  begin
+    WritelnLog('PackageLibrary', Format('Cannot query Git refs for package "%s": %s',
+      [PackageInfo.Id, Trim(Output)]));
+    Exit;
+  end;
+
+  Lines := TStringList.Create;
+  try
+    Lines.Text := Output;
+    for I := 0 to Lines.Count - 1 do
+    begin
+      TabPosition := Pos(#9, Lines[I]);
+      if TabPosition = 0 then
+        Continue;
+      Commit := Copy(Lines[I], 1, TabPosition - 1);
+      RefName := Copy(Lines[I], TabPosition + 1, MaxInt);
+      if not ((Length(Commit) = 40) or (Length(Commit) = 64)) or
+        (RefName = '') then
+        Continue;
+      if (Copy(RefName, 1, 10) = 'refs/tags/') and
+        (Copy(RefName, Length(RefName) - 2, 3) = '^{}') then
+      begin
+        Delete(RefName, Length(RefName) - 2, 3);
+        ExistingRef := 0;
+        while ExistingRef < Length(PackageInfo.GitRefs) do
+        begin
+          if PackageInfo.GitRefs[ExistingRef].Name = RefName then
+          begin
+            PackageInfo.GitRefs[ExistingRef].Commit := Commit;
+            Break;
+          end;
+          Inc(ExistingRef);
+        end;
+        if ExistingRef < Length(PackageInfo.GitRefs) then
+          Continue;
+      end;
+      Ref.Name := RefName;
+      Ref.Commit := Commit;
+      SetLength(PackageInfo.GitRefs, Length(PackageInfo.GitRefs) + 1);
+      PackageInfo.GitRefs[High(PackageInfo.GitRefs)] := Ref;
+      if RefName = 'HEAD' then
+      begin
+        Ref.Name := 'master';
+        SetLength(PackageInfo.GitRefs, Length(PackageInfo.GitRefs) + 1);
+        PackageInfo.GitRefs[High(PackageInfo.GitRefs)] := Ref;
+      end;
+    end;
+  finally FreeAndNil(Lines) end;
+
+  ExecuteCommandCapture('', 'git', ['ls-remote', '--symref', RepositoryUrl,
+    'HEAD'], Output, ExitStatus);
+  if ExitStatus = 0 then
+  begin
+    HeadCommit := '';
+    Lines := TStringList.Create;
+    try
+      Lines.Text := Output;
+      for I := 0 to Lines.Count - 1 do
+      begin
+        TabPosition := Pos(#9, Lines[I]);
+        if (TabPosition > 0) and
+          (Copy(Lines[I], TabPosition + 1, MaxInt) = 'HEAD') then
+        begin
+          Commit := Copy(Lines[I], 1, TabPosition - 1);
+          if (Length(Commit) = 40) or (Length(Commit) = 64) then
+            HeadCommit := Commit;
+        end;
+      end;
+    finally FreeAndNil(Lines) end;
+    if HeadCommit <> '' then
+    begin
+      for I := 0 to 1 do
+      begin
+        if I = 0 then
+          Ref.Name := 'HEAD'
+        else
+          Ref.Name := 'master';
+        Ref.Commit := HeadCommit;
+        SetLength(PackageInfo.GitRefs, Length(PackageInfo.GitRefs) + 1);
+        PackageInfo.GitRefs[High(PackageInfo.GitRefs)] := Ref;
+      end;
+    end;
+  end;
+end;
 
 function PackageHasFeature(const PackageInfo: TPackageInfo;
   const Feature: String): Boolean;
@@ -174,6 +312,7 @@ begin
       PackageInfo.ImageUrl := RequiredString(PackageData, 'image');
       PackageInfo.RepoUrl := RequiredString(PackageData, 'page');
       PackageInfo.Author := RequiredString(PackageData, 'author');
+      LoadPackageGitRefs(PackageInfo);
 
       Field := PackageData.Find('links');
       if (Field = nil) or (Field.JSONType <> jtArray) then
