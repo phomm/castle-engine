@@ -565,7 +565,7 @@ type
     procedure BuildToolCallFinished(Sender: TObject);
     procedure GetInstalledPackages(Sender: TObject);
     procedure PackageCommand(Sender: TObject;
-      const Command, PackageId: String);
+      const Command, PackageId, GitRef: String);
     procedure ListOpenExistingViewRefresh;
     procedure MenuItemAddComponentClick(Sender: TObject);
     procedure MenuItemDesignNewCustomRootClick(Sender: TObject);
@@ -3618,8 +3618,9 @@ begin
   begin
     try
       ReadInstalledDependencyPackages(CombinePaths(ProjectPath, ManifestName),
-        InstalledPackageIds, true);
+        InstalledPackageIds, true, InstalledPackageRefs);
       ImportPackageForm.UpdateInstalledPackageStatuses;
+      ImportPackageForm.SetInstalledPackageRefs(InstalledPackageRefs);
     except
       on E: Exception do
         ErrorBox('Cannot read installed package IDs from the project manifest: ' +
@@ -3637,7 +3638,7 @@ begin
 end;
 
 procedure TProjectForm.PackageCommand(Sender: TObject;
-  const Command, PackageId: String);
+  const Command, PackageId, GitRef: String);
 begin
   if RunningProcess <> nil then
   begin
@@ -3645,7 +3646,10 @@ begin
     Exit;
   end;
 
-  BuildToolCallWithParameters([Command], [PackageId]);
+  if GitRef = '' then
+    BuildToolCallWithParameters([Command], [PackageId])
+  else
+    BuildToolCallWithParameters([Command], [PackageId, GitRef]);
 end;
 
 procedure TProjectForm.MenuItemAddComponentClick(Sender: TObject);

@@ -21,7 +21,7 @@ unit FormImportPackage;
 interface
 
 uses
-  Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ExtCtrls, StdCtrls,
+  Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ExtCtrls, StdCtrls, Menus,
   Generics.Collections,
   CastleDownload, CastleImages, CastleLog, ToolPackageLibrary;
 
@@ -54,12 +54,15 @@ type
   end;
 
   TPackageCommandEvent = procedure(Sender: TObject;
-    const Command, PackageId: String) of object;
+    const Command, PackageId, GitRef: String) of object;
 
   { Component panel template class. }
   TPackagePanel = class(TPanel)
   private
-    procedure ExecutePackageCommand(const Command, ActionName: String);
+    procedure ExecutePackageCommand(const Command, ActionName, GitRef: String);
+    procedure GitRefMenuItemClick(Sender: TObject);
+    procedure ExecuteOrShowGitRefs(const Command, ActionName: String;
+      Sender: TObject);
   public
     Image: TImage;
     LabelName: TLabel;
@@ -71,6 +74,10 @@ type
     ButtonAdd: TButton;
     ButtonUpdate: TButton;
     ButtonRemove: TButton;
+    GitRefMenu: TPopupMenu;
+    PackageInfo: TPackageInfo;
+    InstalledGitRef: String;
+    GitRefsLoaded: Boolean;
   public
     Id: String;
     RepoUrl: String;
@@ -114,11 +121,13 @@ type
     OnRequestInstalledPackages: TNotifyEvent;
     OnPackageCommand: TPackageCommandEvent;
     procedure UpdateInstalledPackageStatuses;
+  procedure SetInstalledPackageRefs(const PackageRefs: TStrings);
   end;
 
 var
   ImportPackageForm: TImportPackageForm;
   InstalledPackageIds: TStringList;
+  InstalledPackageRefs: TStringList;
 
 implementation
 
@@ -334,30 +343,81 @@ end;
 
 { TPackagePanel ----------------------------------------------------------- }
 
-procedure TPackagePanel.ExecutePackageCommand(const Command, ActionName: String);
+procedure TPackagePanel.ExecutePackageCommand(const Command, ActionName,
+  GitRef: String);
 begin
   WritelnLog('ImportPackage', ActionName + ' button clicked for package ID ' + Id +
     ': ' + LabelName.Caption);
   if Assigned(OnPackageCommand) then
-    OnPackageCommand(Self, Command, Id)
+    OnPackageCommand(Self, Command, Id, GitRef)
   else
     WritelnWarning('ImportPackage', 'Cannot ' + LowerCase(ActionName) +
       ' package: no command handler assigned');
 end;
 
+procedure TPackagePanel.GitRefMenuItemClick(Sender: TObject);
+var
+  Item: TMenuItem;
+  Panel: TPackagePanel;
+begin
+  Item := TMenuItem(Sender);
+  Panel := (Item.GetParentMenu as TPopupMenu).PopupComponent as TPackagePanel;
+  ExecutePackageCommand(Item.Hint, Panel.Id, Item.Caption);
+end;
+
+procedure TPackagePanel.ExecuteOrShowGitRefs(const Command, ActionName: String;
+  Sender: TObject);
+var
+  Item: TMenuItem;
+  I: Integer;
+  ScreenPoint: TPoint;
+begin
+  if not GitRefsLoaded then
+  begin
+    LoadPackageGitRefs(PackageInfo);
+    GitRefsLoaded := true;
+  end;
+  if Length(PackageInfo.GitRefs) <= 1 then
+  begin
+    ExecutePackageCommand(Command, ActionName, '');
+    Exit;
+  end;
+
+  if not Assigned(GitRefMenu) then
+  begin
+    GitRefMenu := TPopupMenu.Create(Self);
+    GitRefMenu.PopupComponent := Self;
+  end else
+    GitRefMenu.Items.Clear;
+  for I := 0 to High(PackageInfo.GitRefs) do
+  begin
+    Item := TMenuItem.Create(GitRefMenu);
+    Item.Caption := PackageInfo.GitRefs[I].Name;
+    Item.Hint := Command;
+    Item.OnClick := @GitRefMenuItemClick;
+    Item.RadioItem := Command = 'update-package';
+    Item.Checked := Item.RadioItem and
+      ((InstalledGitRef = PackageInfo.GitRefs[I].Name) or
+       ((InstalledGitRef = '') and (PackageInfo.GitRefs[I].Name = 'master')));
+    GitRefMenu.Items.Add(Item);
+  end;
+  ScreenPoint := TControl(Sender).ClientToScreen(Point(0, TControl(Sender).Height));
+  GitRefMenu.PopUp(ScreenPoint.X, ScreenPoint.Y);
+end;
+
 procedure TPackagePanel.ButtonAddClick(Sender: TObject);
 begin
-  ExecutePackageCommand('install-package', 'Add');
+  ExecuteOrShowGitRefs('install-package', 'Add', Sender);
 end;
 
 procedure TPackagePanel.ButtonUpdateClick(Sender: TObject);
 begin
-  ExecutePackageCommand('update-package', 'Update');
+  ExecuteOrShowGitRefs('update-package', 'Update', Sender);
 end;
 
 procedure TPackagePanel.ButtonRemoveClick(Sender: TObject);
 begin
-  ExecutePackageCommand('remove-package', 'Remove');
+  ExecutePackageCommand('remove-package', 'Remove', '');
 end;
 
 procedure TPackagePanel.LabelRepoClick(Sender: TObject);
@@ -428,6 +488,18 @@ begin
     ComponentPanel.ButtonAdd.Visible := not IsInstalled;
     ComponentPanel.ButtonUpdate.Visible := IsInstalled;
     ComponentPanel.ButtonRemove.Visible := IsInstalled;
+  end;
+end;
+
+procedure TImportPackageForm.SetInstalledPackageRefs(const PackageRefs: TStrings);
+var
+  I: Integer;
+  ComponentPanel: TPackagePanel;
+begin
+  for I := 0 to ScrollBoxPackages.ControlCount - 1 do
+  begin
+    ComponentPanel := TPackagePanel(ScrollBoxPackages.Controls[I]);
+    ComponentPanel.InstalledGitRef := PackageRefs.Values[ComponentPanel.Id];
   end;
 end;
 
@@ -645,6 +717,7 @@ begin
     ComponentPanel.BorderStyle := bsSingle;
     ComponentPanel.BevelOuter := bvNone;
     ComponentPanel.Id := ComponentList[I].Id;
+    ComponentPanel.PackageInfo := ComponentList[I];
     ComponentPanel.OnPackageCommand := OnPackageCommand;
 
     IsInstalled := InstalledPackageIds.IndexOf(ComponentPanel.Id) <> -1;
@@ -783,8 +856,10 @@ end;
 
 initialization
   InstalledPackageIds := TStringList.Create;
+  InstalledPackageRefs := TStringList.Create;
 
 finalization
   FreeAndNil(InstalledPackageIds);
+  FreeAndNil(InstalledPackageRefs);
 
 end.
